@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MiObra — Plataforma</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <!-- Firebase SDK -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
@@ -376,7 +377,7 @@ async function renderGlobalDashboard(){
 function nuevoProyecto(){
   document.getElementById('proy-modal-titulo').textContent='Nuevo proyecto';
   document.getElementById('proy-edit-id').value='';
-  ['proy-nombre','proy-ubicacion','proy-empresa','proy-responsable','proy-inicio','proy-fin'].forEach(id=>document.getElementById(id).value='');
+  ['proy-nombre','proy-ubicacion','proy-empresa','proy-responsable','proy-inicio','proy-fin','proy-margen'].forEach(id=>document.getElementById(id).value='');
   // All users for assignment
   const usuarios = window._adminUsuarios || [];
   renderProyUsuarios(usuarios, []);
@@ -394,6 +395,7 @@ function editarProyecto(id){
   document.getElementById('proy-responsable').value=p.responsable||'';
   document.getElementById('proy-inicio').value=p.inicio||'';
   document.getElementById('proy-fin').value=p.fin||'';
+  document.getElementById('proy-margen').value=p.margen!=null?p.margen:''
   const usuarios = window._adminUsuarios || [];
   renderProyUsuarios(usuarios, p.usuariosIds||[]);
   openModal('modal-proyecto');
@@ -418,6 +420,7 @@ async function guardarProyecto(){
   const checks = document.querySelectorAll('#proy-usuarios-lista input[type=checkbox]:checked');
   const usuariosIds = Array.from(checks).map(c=>c.value);
 
+  const margenVal = document.getElementById('proy-margen').value;
   const data = {
     nombre,
     ubicacion: document.getElementById('proy-ubicacion').value.trim(),
@@ -425,6 +428,7 @@ async function guardarProyecto(){
     responsable: document.getElementById('proy-responsable').value.trim(),
     inicio: document.getElementById('proy-inicio').value,
     fin: document.getElementById('proy-fin').value,
+    margen: margenVal!=='' ? parseFloat(margenVal) : null,
     usuariosIds,
     activo: true,
     actualizadoEn: serverTimestamp()
@@ -713,9 +717,19 @@ function volverSelector(){
 // ============================================================
 const S = new Proxy({}, { get:(_,k)=>proyectoData[k]||[] });
 
+// Margen del proyecto actual (0–100)
+function getMargen(){ return currentProyecto?.margen!=null ? parseFloat(currentProyecto.margen) : 0; }
+// Factor neto (ej: margen 20% → factor 0.80)
+function factorNeto(){ return 1 - getMargen()/100; }
+// Precio unitario neto de un concepto
+function precioNeto(precio){ return precio * factorNeto(); }
+// Presupuesto BRUTO total (precios originales del catálogo)
+function getPresBruto(){ return (proyectoData.conceptos||[]).reduce((s,c)=>s+c.cantidad*c.precio,0); }
+// Monto retenido como margen
+function getMontoMargen(){ return getPresBruto() * (getMargen()/100); }
 function getPs(){ return [...new Set((proyectoData.conceptos||[]).map(c=>c.partida))]; }
-function getPres(){ const g={}; (proyectoData.conceptos||[]).forEach(c=>{g[c.partida]=(g[c.partida]||0)+c.cantidad*c.precio;}); return g; }
-function getPresT(){ return (proyectoData.conceptos||[]).reduce((s,c)=>s+c.cantidad*c.precio,0); }
+function getPres(){ const g={}; const f=factorNeto(); (proyectoData.conceptos||[]).forEach(c=>{g[c.partida]=(g[c.partida]||0)+c.cantidad*c.precio*f;}); return g; }
+function getPresT(){ return (proyectoData.conceptos||[]).reduce((s,c)=>s+c.cantidad*c.precio*factorNeto(),0); }
 function getGas(){ const g={}; (proyectoData.movimientos||[]).filter(m=>m.tipo==='gasto').forEach(m=>{g[m.partida]=(g[m.partida]||0)+m.monto;}); return g; }
 const getTIng=()=>(proyectoData.movimientos||[]).filter(m=>m.tipo==='ingreso').reduce((s,m)=>s+m.monto,0);
 const getTGas=()=>(proyectoData.movimientos||[]).filter(m=>m.tipo==='gasto').reduce((s,m)=>s+m.monto,0);
@@ -837,19 +851,11 @@ function renderDashCharts(ps,gr,gp){
 // CATÁLOGO
 // ============================================================
 function renderCat(){
-  if(!proyectoData.conceptos?.length){
-    document.getElementById('cat-res').style.display='none';
-    document.getElementById('cat-lista').innerHTML='<div class="empty"><div class="ei">📋</div><p>Catálogo vacío</p></div>';return;
-  }
-  const gr={};
-  (proyectoData.conceptos||[]).forEach(c=>{if(!gr[c.partida])gr[c.partida]=[];gr[c.partida].push(c);});
-  const tot=getPresT();
-  document.getElementById('cat-res').style.display='block';
-  // Botones del catálogo según rol
+  // Botones del catálogo según rol — siempre se renderizan, sin importar si hay conceptos
   const catBtns = document.getElementById('cat-botones');
   if(catBtns){
     catBtns.innerHTML = esGerencia()
-      ? `<button class="btn" onclick="document.getElementById('csv-inp').click()">📂 Importar CSV</button>
+      ? `<button class="btn" onclick="document.getElementById('xlsx-inp').click()">📂 Importar Excel</button>
          <button class="btn btn-p" onclick="openModal('modal-conc')">+ Nuevo concepto</button>`
       : '';
   }
@@ -858,6 +864,14 @@ function renderCat(){
     dashBitBtn.innerHTML = esGerencia()
       ? `<button class="btn btn-sm" onclick="openModalBitacora()">📓 + Bitácora</button>` : '';
   }
+  if(!proyectoData.conceptos?.length){
+    document.getElementById('cat-res').style.display='none';
+    document.getElementById('cat-lista').innerHTML='<div class="empty"><div class="ei">📋</div><p>Catálogo vacío — agrega tu primer concepto</p></div>';return;
+  }
+  const gr={};
+  (proyectoData.conceptos||[]).forEach(c=>{if(!gr[c.partida])gr[c.partida]=[];gr[c.partida].push(c);});
+  const tot=getPresT(); // precio neto
+  document.getElementById('cat-res').style.display='block';
   document.getElementById('cat-res').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center">
     <div><div style="font-size:11px;color:var(--tx3)">Presupuesto total</div>
     <div style="font-size:22px;font-weight:700;color:var(--ac);font-family:var(--fd)">${fmt(tot)}</div>
@@ -865,13 +879,13 @@ function renderCat(){
     ${esGerencia()?`<button class="btn btn-d btn-sm" onclick="if(confirm('¿Limpiar catálogo?')){proyectoData.conceptos=[];renderCat();}">Limpiar</button>`:''}
     </div>`;
   document.getElementById('cat-lista').innerHTML=Object.entries(gr).map(([gn,items])=>{
-    const sub=items.reduce((s,i)=>s+i.cantidad*i.precio,0);
+    const subBruto=items.reduce((s,i)=>s+i.cantidad*i.precio,0),subNeto=subBruto*factorNeto();
     return`<div class="pc"><div class="ph"><span style="font-weight:600;font-size:14px">${gn}</span>
-    <div style="display:flex;gap:10px;align-items:center"><span style="font-size:11px;color:var(--tx3)">${items.length} conc.</span><span style="font-size:14px;font-weight:700;color:var(--ac)">${fmt(sub)}</span></div></div>
-    <div class="tw"><table><thead><tr><th>Concepto</th><th>Cat.</th><th>Unidad</th><th>Cant.</th><th>P.U.</th><th>Total</th>${esGerencia()?'<th></th>':''}</tr></thead>
+    <div style="display:flex;gap:10px;align-items:center"><span style="font-size:11px;color:var(--tx3)">${items.length} conc.</span><span style="font-size:14px;font-weight:700;color:var(--ac)">${fmt(subNeto)}</span>${esGerencia()&&getMargen()>0?`<span style="font-size:11px;color:var(--tx3)">Bruto: ${fmt(subBruto)}</span>`:''}</div></div>
+    <div class="tw"><table><thead><tr><th>Concepto</th><th>Cat.</th><th>Unidad</th><th>Cant.</th><th>P.U. Neto</th><th>Total Neto</th>${esGerencia()?'<th>P.U. Bruto</th><th>Total Bruto</th><th></th>':''}</tr></thead>
     <tbody>${items.map(i=>`<tr><td>${i.concepto}</td><td><span class="badge bb">${i.categoria}</span></td><td>${i.unidad}</td>
-    <td>${fmtN(i.cantidad)}</td><td>${fmt(i.precio)}</td><td style="font-weight:600">${fmt(i.cantidad*i.precio)}</td>
-    ${esGerencia()?`<td><button class="btn btn-sm btn-d" onclick="elimConc('${i.id}')">✕</button></td>`:''}</tr>`).join('')}</tbody></table></div></div>`;
+    <td>${fmtN(i.cantidad)}</td><td>${fmt(precioNeto(i.precio))}</td><td style="font-weight:600">${fmt(i.cantidad*precioNeto(i.precio))}</td>
+    ${esGerencia()?`<td style="color:var(--tx3);font-size:12px">${fmt(i.precio)}</td><td style="color:var(--tx3);font-size:12px">${fmt(i.cantidad*i.precio)}</td><td><button class="btn btn-sm btn-d" onclick="elimConc('${i.id}')">✕</button></td>`:''}</tr>`).join('')}</tbody></table></div></div>`;
   }).join('');
 }
 
@@ -1647,13 +1661,49 @@ function renderRep(){
   document.getElementById('rep-sub').textContent=[currentProyecto?.ubicacion,currentProyecto?.empresa].filter(Boolean).join(' — ');
   document.getElementById('rep-corte').textContent='Corte al: '+new Date().toLocaleDateString('es-MX',{year:'numeric',month:'long',day:'numeric'});
   const pt=getPresT(),gas=getTGas(),ing=getTIng(),bal=ing-gas,avG=getAvG();
+  const margen=getMargen(),montoMgn=getMontoMargen(),presBruto=getPresBruto();
   document.getElementById('rep-met').innerHTML=`
-    <div class="met ca"><div class="ml">Presupuesto</div><div class="mv">${fmt(pt)}</div></div>
+    <div class="met ca"><div class="ml">Presupuesto neto</div><div class="mv">${fmt(pt)}</div><div class="ms">Con margen aplicado</div></div>
     <div class="met cr"><div class="ml">Ejercido</div><div class="mv">${fmt(gas)}</div><div class="ms">${pct(gas,pt)}%</div></div>
     <div class="met ${pt-gas>=0?'cg':'cr'}"><div class="ml">Por ejercer</div><div class="mv">${fmt(pt-gas)}</div></div>
     <div class="met cg"><div class="ml">Ingresos</div><div class="mv">${fmt(ing)}</div></div>
     <div class="met ${bal>=0?'cg':'cr'}"><div class="ml">Balance</div><div class="mv">${fmt(bal)}</div></div>
     <div class="met cb"><div class="ml">Avance</div><div class="mv">${avG}%</div></div>`;
+  // Sección margen — solo inversionista y admin
+  const secMargen = document.getElementById('rep-margen-sec');
+  if(secMargen){
+    if((esInversionista()||esAdmin()) && margen>0){
+      secMargen.style.display='block';
+      document.getElementById('rep-margen-contenido').innerHTML=`
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px">
+          <div style="background:var(--acl);border:1px solid var(--bo);border-radius:10px;padding:16px 18px">
+            <div style="font-size:10px;color:var(--ac);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Margen de utilidad</div>
+            <div style="font-size:28px;font-weight:700;color:var(--ac);font-family:var(--fd)">${margen}%</div>
+            <div style="font-size:11px;color:var(--tx3);margin-top:2px">Definido en configuración del proyecto</div>
+          </div>
+          <div style="background:var(--gnb);border:1px solid rgba(46,107,71,.2);border-radius:10px;padding:16px 18px">
+            <div style="font-size:10px;color:var(--gn);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Monto retenido (utilidad)</div>
+            <div style="font-size:28px;font-weight:700;color:var(--gn);font-family:var(--fd)">${fmt(montoMgn)}</div>
+            <div style="font-size:11px;color:var(--tx3);margin-top:2px">${margen}% sobre presupuesto bruto</div>
+          </div>
+          <div style="background:var(--sur2);border:1px solid var(--bo2);border-radius:10px;padding:16px 18px">
+            <div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Presupuesto bruto</div>
+            <div style="font-size:28px;font-weight:700;color:var(--tx2);font-family:var(--fd)">${fmt(presBruto)}</div>
+            <div style="font-size:11px;color:var(--tx3);margin-top:2px">Antes de descontar margen</div>
+          </div>
+          <div style="background:var(--sur2);border:1px solid var(--bo2);border-radius:10px;padding:16px 18px">
+            <div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Presupuesto neto</div>
+            <div style="font-size:28px;font-weight:700;color:var(--tx);font-family:var(--fd)">${fmt(pt)}</div>
+            <div style="font-size:11px;color:var(--tx3);margin-top:2px">Bruto menos margen (${margen}%)</div>
+          </div>
+        </div>
+        <div style="background:var(--sur2);border-radius:9px;padding:14px 16px;font-size:13px;color:var(--tx2);border-left:3px solid var(--ac)">
+          💡 La utilidad de <strong style="color:var(--ac)">${fmt(montoMgn)}</strong> representa el <strong>${margen}%</strong> del presupuesto bruto (<strong>${fmt(presBruto)}</strong>). El presupuesto neto presentado al cliente es de <strong>${fmt(pt)}</strong>.
+        </div>`;
+    } else {
+      secMargen.style.display='none';
+    }
+  }
   const gr=getPres(),gp=getGas(),ps=Object.keys(gr);
   document.getElementById('rep-part').innerHTML=ps.map(p=>{
     const pr=gr[p],g=gp[p]||0,pG=pct(g,pr),avP=getAv(p),nc=getCortes(p).length;
@@ -1696,28 +1746,49 @@ function renderRepCharts(ps,gr,gp){
 }
 
 // ============================================================
-// CSV IMPORT
+// XLSX IMPORT
 // ============================================================
-function importarCSV(evt){
+function importarXLSX(evt){
   const file=evt.target.files[0];if(!file)return;
+  if(!window.XLSX){showToast('Error: librería XLSX no cargada','err');return;}
   const r=new FileReader();
   r.onload=async e=>{
-    const lines=e.target.result.split('\n').filter(l=>l.trim());
-    const hdr=lines[0].split(',').map(h=>h.trim().toLowerCase().replace(/[" ]/g,''));
-    let added=0;
-    for(let i=1;i<lines.length;i++){
-      const cols=lines[i].split(',').map(c=>c.trim().replace(/^"|"$/g,''));
-      const row={};hdr.forEach((h,j)=>row[h]=cols[j]||'');
-      if((row.partida||row.partidas)&&(row.concepto||row.descripcion)){
-        const item={id:rnd(),partida:row.partida||row.partidas,concepto:row.concepto||row.descripcion,
-          unidad:row.unidad||'m²',cantidad:parseFloat(row.cantidad)||1,
-          precio:parseFloat(row.precio_unitario||row.precio||row.pu)||0,categoria:row.categoria||'Obra civil',notas:row.notas||''};
+    try{
+      const wb=XLSX.read(e.target.result,{type:'array'});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+      if(!rows.length){showToast('El archivo está vacío','err');return;}
+      // Normalizar encabezados
+      const norm=s=>String(s).trim().toLowerCase()
+        .replace(/á/g,'a').replace(/é/g,'e').replace(/í/g,'i').replace(/ó/g,'o').replace(/ú/g,'u')
+        .replace(/[^a-z0-9_]/g,'');
+      let added=0;
+      for(const raw of rows){
+        const row={};
+        Object.entries(raw).forEach(([k,v])=>row[norm(k)]=v);
+        const partida=row.partida||row.partidas||'';
+        const concepto=row.concepto||row.descripcion||row.concepto_trabajo||'';
+        if(!partida||!concepto) continue;
+        const item={
+          id:rnd(),
+          partida:String(partida).trim(),
+          concepto:String(concepto).trim(),
+          unidad:String(row.unidad||row.uni||'m²').trim(),
+          cantidad:parseFloat(row.cantidad||row.cant||1)||1,
+          precio:parseFloat(row.precio_unitario||row.precio||row.pu||row.p_u||0)||0,
+          categoria:String(row.categoria||row.cat||'Obra civil').trim(),
+          notas:String(row.notas||row.nota||'').trim()
+        };
         await saveItem('conceptos',item);added++;
       }
+      renderCat();
+      showToast(added+' conceptos importados desde Excel');
+    }catch(err){
+      showToast('Error al leer el archivo: '+err.message,'err');
     }
-    renderCat();showToast(added+' conceptos importados');evt.target.value='';
+    evt.target.value='';
   };
-  r.readAsText(file,'utf-8');
+  r.readAsArrayBuffer(file);
 }
 
 // ============================================================
@@ -1770,7 +1841,7 @@ Object.assign(window,{
   openModalEval,guardarEval,updEvalBarra,elimSemana,
   openModalBitacora,guardarBitacora,elimBitacora,renderBitacora,
   renderNomina,updNomDestajo,
-  importarCSV,renderGlobalDashboard,loadAdminProyectos,loadAdminUsuarios,loadAdminActividad
+  importarXLSX,renderGlobalDashboard,loadAdminProyectos,loadAdminUsuarios,loadAdminActividad
 });
 </script>
 <style>
@@ -2128,8 +2199,8 @@ tbody tr:hover td{background:var(--sur2);}
         <div><div class="sh-t">Catálogo de conceptos</div><div class="sh-s">Presupuesto base por partidas</div></div>
         <div class="sh-r" id="cat-botones"></div>
       </div>
-      <input type="file" id="csv-inp" accept=".csv,.txt" style="display:none" onchange="importarCSV(event)">
-      <div class="wiz"><div class="wt">Formato CSV</div><div class="ws">Encabezados: <strong>partida, concepto, unidad, cantidad, precio_unitario, categoria</strong></div></div>
+      <input type="file" id="xlsx-inp" accept=".xlsx,.xls" style="display:none" onchange="importarXLSX(event)">
+      <div class="wiz"><div class="wt">Formato Excel (.xlsx)</div><div class="ws">La primera fila debe tener los encabezados: <strong>partida, concepto, unidad, cantidad, precio_unitario, categoria</strong> — También acepta variantes como: partidas, descripcion, precio, p_u, cant, notas.</div></div>
       <div id="cat-res" style="display:none" class="card"></div>
       <div id="cat-lista"></div>
     </div>
@@ -2239,6 +2310,13 @@ tbody tr:hover td{background:var(--sur2);}
         <p style="margin-top:11px;font-size:13px;color:#c4c0b8" id="rep-corte"></p>
       </div></div>
       <div class="metrics" id="rep-met"></div>
+      <!-- Sección margen de utilidad — solo inversionista/admin -->
+      <div id="rep-margen-sec" style="display:none;margin-bottom:14px">
+        <div class="card">
+          <div class="rsec">📊 Margen de utilidad del proyecto</div>
+          <div id="rep-margen-contenido"></div>
+        </div>
+      </div>
       <div class="g2">
         <div class="card"><div class="rsec">Distribución presupuesto</div><div class="cw"><canvas id="ch-donut"></canvas></div></div>
         <div class="card"><div class="rsec">Cashflow acumulado</div><div class="cw"><canvas id="ch-cf"></canvas></div></div>
@@ -2454,6 +2532,13 @@ tbody tr:hover td{background:var(--sur2);}
       <div class="fg"><label>Fecha inicio</label><input id="proy-inicio" type="date"></div>
       <div class="fg"><label>Fecha entrega</label><input id="proy-fin" type="date"></div>
       <div class="fg fc2"><label>Responsable técnico</label><input id="proy-responsable" type="text"></div>
+      <div class="fg fc2">
+        <label>Margen de utilidad (%)</label>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input id="proy-margen" type="number" min="0" max="100" step="0.1" placeholder="Ej: 20" style="width:140px">
+          <span style="font-size:12px;color:var(--tx3)">Este porcentaje se descuenta de los precios unitarios del catálogo. Solo visible para inversionistas y administrador.</span>
+        </div>
+      </div>
       <div class="fg fc2">
         <label>Usuarios con acceso (Residentes / Inversionistas)</label>
         <div id="proy-usuarios-lista" style="display:flex;flex-direction:column;gap:7px;max-height:200px;overflow-y:auto;padding:4px 0"></div>
