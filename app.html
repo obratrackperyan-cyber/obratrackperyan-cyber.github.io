@@ -728,14 +728,36 @@ function getPresBruto(){ return (proyectoData.conceptos||[]).reduce((s,c)=>s+c.c
 // Monto retenido como margen
 function getMontoMargen(){ return getPresBruto() * (getMargen()/100); }
 function getPs(){ return [...new Set((proyectoData.conceptos||[]).map(c=>c.partida))]; }
+// Categorías únicas del catálogo
+function getCats(){ return [...new Set((proyectoData.conceptos||[]).map(c=>c.categoria||'Sin categoría'))]; }
+// Conceptos de una categoría específica
+function getConceptosCat(cat){ return (proyectoData.conceptos||[]).filter(c=>(c.categoria||'Sin categoría')===cat); }
+// Concepto por id
+function getConcById(id){ return (proyectoData.conceptos||[]).find(c=>String(c.id)===String(id)); }
+// Unidades que se cuentan (no lote)
+const UNIDADES_CONTABLES=['m²','m2','m³','m3','ml','kg','ton','pieza','piezas','hr','jornada'];
+function esUnidadContable(uni){ return UNIDADES_CONTABLES.includes((uni||'').toLowerCase().trim()); }
+// Generar options de categoría para selects
+function optsCat(selVal){ return getCats().map(c=>`<option value="${c}" ${c===selVal?'selected':''}>${c}</option>`).join(''); }
+// Generar options de conceptos de una categoría
+function optsConc(cat,selVal){ return getConceptosCat(cat).map(c=>`<option value="${c.id}" ${String(c.id)===String(selVal)?'selected':''}>${c.concepto} (${c.unidad})</option>`).join(''); }
+// Avance por concepto (cortes indexados por conceptoId)
+function getCortesConc(concId){ return (proyectoData.cortes||[]).filter(c=>String(c.conceptoId)===String(concId)).sort((a,b)=>a.fecha.localeCompare(b.fecha)); }
+function getAvConc(concId){ const cs=getCortesConc(concId); return cs.length?cs[cs.length-1].pctAcum:0; }
 function getPres(){ const g={}; const f=factorNeto(); (proyectoData.conceptos||[]).forEach(c=>{g[c.partida]=(g[c.partida]||0)+c.cantidad*c.precio*f;}); return g; }
+// Avance global: promedio de avances de todos los conceptos
+function getAvG(){
+  const concs=proyectoData.conceptos||[];
+  if(!concs.length)return 0;
+  return Math.round(concs.reduce((s,c)=>s+getAvConc(c.id),0)/concs.length);
+}
 function getPresT(){ return (proyectoData.conceptos||[]).reduce((s,c)=>s+c.cantidad*c.precio*factorNeto(),0); }
 function getGas(){ const g={}; (proyectoData.movimientos||[]).filter(m=>m.tipo==='gasto').forEach(m=>{g[m.partida]=(g[m.partida]||0)+m.monto;}); return g; }
 const getTIng=()=>(proyectoData.movimientos||[]).filter(m=>m.tipo==='ingreso').reduce((s,m)=>s+m.monto,0);
 const getTGas=()=>(proyectoData.movimientos||[]).filter(m=>m.tipo==='gasto').reduce((s,m)=>s+m.monto,0);
 function getCortes(p){ return (proyectoData.cortes||[]).filter(c=>c.partida===p).sort((a,b)=>a.fecha.localeCompare(b.fecha)); }
 function getAv(p){ const cs=getCortes(p); return cs.length?cs[cs.length-1].pctAcum:0; }
-function getAvG(){ const ps=getPs(); if(!ps.length)return 0; return Math.round(ps.reduce((s,p)=>s+getAv(p),0)/ps.length); }
+// getAvG defined above with concepto-level tracking
 function cpct(p){ return p>90?'pfr':p>75?'pfa':'pfg'; }
 function bc(p){ return p===100?'bg':p>0?'ba':'bx'; }
 const bitIcon=tipo=>({general:'📝',incidencia:'⚠️',visita:'🤝',material:'📦',clima:'🌧️',seguridad:'⛑️'}[tipo]||'📝');
@@ -804,12 +826,39 @@ function renderDash(){
   } else { semsRow.style.display='none'; }
 
   const gr=getPres(),gp=getGas(),ps=Object.keys(gr);
-  document.getElementById('dash-part').innerHTML=ps.length?ps.map(p=>{
-    const pr=gr[p],g=gp[p]||0,pG=pct(g,pr),avP=getAv(p),c=cpct(pG);
-    return`<div class="sr"><div class="sd ${c==='pfg'?'sdg':c==='pfr'?'sdr':'sda'}"></div><div style="min-width:110px;font-size:13px"><strong>${p}</strong></div>
-    <div style="flex:1;margin:0 12px"><div class="pb"><div class="pf ${c}" style="width:${pG}%"></div></div><div class="pl"><span>${fmt(g)}</span><span>${fmt(pr)}</span></div></div>
-    <div style="font-size:11px;min-width:44px;text-align:center">${pG}%</div>
-    <span class="badge ${bc(avP)}" style="margin-left:8px;min-width:58px;text-align:center">${avP}% av.</span></div>`;
+  // Dashboard: agrupado por partida → categoría → concepto
+  const concs=proyectoData.conceptos||[];
+  const partsGrp={};
+  concs.forEach(c=>{
+    if(!partsGrp[c.partida])partsGrp[c.partida]={};
+    const cat=c.categoria||'Sin categoría';
+    if(!partsGrp[c.partida][cat])partsGrp[c.partida][cat]=[];
+    partsGrp[c.partida][cat].push(c);
+  });
+  document.getElementById('dash-part').innerHTML=Object.keys(partsGrp).length?Object.entries(partsGrp).map(([part,cats])=>{
+    const pr=gr[part]||0,g=gp[part]||0,pG=pct(g,pr),col=cpct(pG);
+    const catRows=Object.entries(cats).map(([cat,items])=>`
+      <div style="margin-bottom:6px">
+        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--ac);margin-bottom:4px">📁 ${cat}</div>
+        ${items.map(c=>{const avC=getAvConc(c.id);return`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:0.5px solid var(--bo);flex-wrap:wrap">
+          <div style="flex:1;min-width:160px;font-size:12px">${c.concepto}</div>
+          <div style="font-size:11px;color:var(--tx3);white-space:nowrap">${fmtN(c.cantidad)} ${c.unidad}</div>
+          <div style="min-width:80px"><div class="pb" style="height:5px"><div class="pf ${bc(avC)==='bg'?'pfg':avC>0?'pfa':'pfg'}" style="width:${avC}%"></div></div></div>
+          <span class="badge ${bc(avC)}" style="font-size:10px;min-width:46px;text-align:center">${avC}%</span>
+        </div>`;}).join('')}
+      </div>`).join('');
+    return`<div class="card" style="margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+        <div class="sd ${col==='pfg'?'sdg':col==='pfr'?'sdr':'sda'}"></div>
+        <div style="font-size:14px;font-weight:700;flex:1">${part}</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <div style="font-size:11px;color:var(--tx3)">${fmt(g)} / ${fmt(pr)}</div>
+          <div style="min-width:100px"><div class="pb"><div class="pf ${col}" style="width:${Math.min(pG,100)}%"></div></div></div>
+          <span style="font-size:11px;font-weight:600">${pG}%</span>
+        </div>
+      </div>
+      ${catRows}
+    </div>`;
   }).join(''):'<div class="empty"><div class="ei">📋</div><p>Sin partidas</p></div>';
 
   const bitRec=[...(proyectoData.bitacora||[])].sort((a,b)=>b.fecha.localeCompare(a.fecha)).slice(0,3);
@@ -908,39 +957,84 @@ async function elimConc(id){
 // ============================================================
 // GASTOS
 // ============================================================
+function onFilCat(){
+  const cat=document.getElementById('fil-cat').value;
+  const concSel=document.getElementById('fil-conc');
+  if(!cat){
+    concSel.innerHTML='<option value="">Todos los conceptos</option>';
+  } else {
+    const concs=getConceptosCat(cat);
+    concSel.innerHTML='<option value="">Todos los conceptos</option>'+
+      concs.map(c=>`<option value="${c.id}">${c.concepto}</option>`).join('');
+  }
+  renderGastos();
+}
+
+function limpiarFiltrosGastos(){
+  document.getElementById('fil-tipo').value='';
+  document.getElementById('fil-cat').value='';
+  document.getElementById('fil-conc').innerHTML='<option value="">Todos los conceptos</option>';
+  renderGastos();
+}
+
 function renderGastos(){
   const ing=getTIng(),gas=getTGas(),bal=ing-gas;
   document.getElementById('g-ing').textContent=fmt(ing);
   document.getElementById('g-gas').textContent=fmt(gas);
   document.getElementById('g-bal').textContent=fmt(bal);
   document.getElementById('g-bmet').className='met '+(bal>=0?'cg':'cr');
-  const fp=document.getElementById('fil-part'),sv=fp.value;
-  fp.innerHTML='<option value="">Todas las partidas</option>'+getPs().map(p=>`<option value="${p}">${p}</option>`).join('');
-  fp.value=sv;
-  const tipo=document.getElementById('fil-tipo').value,part=fp.value;
+
+  // Poblar categorías manteniendo selección actual
+  const catSel=document.getElementById('fil-cat'),catV=catSel.value;
+  catSel.innerHTML='<option value="">Todas las categorías</option>'+
+    getCats().map(c=>`<option value="${c}" ${c===catV?'selected':''}>${c}</option>`).join('');
+
+  const tipo=document.getElementById('fil-tipo').value;
+  const catFil=document.getElementById('fil-cat').value;
+  const concFil=document.getElementById('fil-conc').value;
+
   let movs=[...(proyectoData.movimientos||[])].sort((a,b)=>b.fecha.localeCompare(a.fecha));
-  if(tipo)movs=movs.filter(m=>m.tipo===tipo);
-  if(part)movs=movs.filter(m=>m.partida===part);
+  if(tipo)  movs=movs.filter(m=>m.tipo===tipo);
+  if(catFil) movs=movs.filter(m=>m.categoria===catFil);
+  if(concFil) movs=movs.filter(m=>String(m.conceptoId)===String(concFil));
+
   document.getElementById('mov-cnt').textContent=movs.length;
   const gasAddBtn = document.getElementById('gas-add-btn');
   if(gasAddBtn) gasAddBtn.innerHTML = esGerencia() ? `<button class="btn btn-p" onclick="openModal('modal-mov')">+ Registrar</button>` : '';
   document.getElementById('mov-tbl').innerHTML=movs.map(m=>`
-    <tr><td>${fmtF(m.fecha)}</td><td>${m.partida}</td><td>${m.concepto}</td>
-    <td style="color:var(--tx3)">${m.proveedor||'—'}</td><td style="color:var(--tx3);font-size:12px">${m.ref||'—'}</td>
-    <td><span class="badge ${m.tipo==='ingreso'?'bg':'br'}">${m.tipo}</span></td>
-    <td style="font-weight:600;color:${m.tipo==='ingreso'?'var(--gn)':'var(--rd)'}">${m.tipo==='ingreso'?'+':'-'}${fmt(m.monto)}</td>
-    ${esGerencia()?`<td><button class="btn btn-sm btn-d" onclick="elimMov('${m.id}')">✕</button></td>`:''}</tr>`).join('')
+    <tr>
+      <td>${fmtF(m.fecha)}</td>
+      <td>
+        <div style="font-size:12px;font-weight:600">${m.partida||'—'}</div>
+        ${m.categoria?`<div style="font-size:10px;color:var(--ac)">📁 ${m.categoria}</div>`:''}
+      </td>
+      <td>${m.concepto}</td>
+      <td style="color:var(--tx3)">${m.proveedor||'—'}</td>
+      <td style="color:var(--tx3);font-size:12px">${m.ref||'—'}</td>
+      <td><span class="badge ${m.tipo==='ingreso'?'bg':'br'}">${m.tipo}</span></td>
+      <td style="font-weight:600;color:${m.tipo==='ingreso'?'var(--gn)':'var(--rd)'}">${m.tipo==='ingreso'?'+':'-'}${fmt(m.monto)}</td>
+      ${esGerencia()?`<td><button class="btn btn-sm btn-d" onclick="elimMov('${m.id}')">✕</button></td>`:''}</tr>`).join('')
     ||'<tr><td colspan="8" style="text-align:center;color:var(--tx3);padding:22px">Sin movimientos</td></tr>';
+}
+
+function onMovCat(){
+  const cat=document.getElementById('m-cat').value;
+  const sel=document.getElementById('m-conc-sel');
+  if(!cat){sel.innerHTML='<option value="">-- Selecciona categoría primero --</option>';return;}
+  sel.innerHTML='<option value="">-- Selecciona concepto --</option>'+optsConc(cat);
 }
 
 async function guardarMov(){
   const monto=parseFloat(document.getElementById('m-mon').value)||0;
-  const con=document.getElementById('m-con').value.trim();
-  if(!monto||!con){showToast('Completa concepto y monto','err');return;}
+  const concId=document.getElementById('m-conc-sel').value;
+  if(!monto||!concId){showToast('Selecciona un concepto e ingresa el monto','err');return;}
+  const conc=getConcById(concId);
+  if(!conc){showToast('Concepto no encontrado','err');return;}
   const item={id:rnd(),tipo:document.getElementById('m-tipo').value,
     fecha:document.getElementById('m-fec').value||td(),
-    partida:document.getElementById('m-part').value,
-    monto,concepto:con,proveedor:document.getElementById('m-pro').value.trim(),
+    partida:conc.partida, categoria:conc.categoria||'',
+    conceptoId:conc.id,
+    monto,concepto:conc.concepto,proveedor:document.getElementById('m-pro').value.trim(),
     ref:document.getElementById('m-ref').value.trim(),
     obs:document.getElementById('m-obs').value.trim(),
     creadoPor:currentProfile.nombre||currentUser.email};
@@ -959,64 +1053,92 @@ async function elimMov(id){
 const SCOL=['#b87333','#2e6b47','#1a4d8b','#8a6010','#b52e2e','#6b2e8b','#2e6b8b','#5a5a52'];
 
 function renderAv(){
-  const gr=getPres(),gp=getGas(),ps=Object.keys(gr);
-  if(!ps.length){document.getElementById('avance-lista').innerHTML='<div class="empty"><div class="ei">📐</div><p>Sin partidas</p></div>';return;}
   const avAddBtn = document.getElementById('av-add-btn');
   if(avAddBtn) avAddBtn.innerHTML = esGerencia() ? `<button class="btn btn-p" onclick="openModalCorte()">+ Nuevo corte</button>` : '';
-  document.getElementById('avance-lista').innerHTML=ps.map(p=>{
-    const pr=gr[p],g=gp[p]||0,pG=pct(g,pr);
-    const cs=getCortes(p),avAc=cs.length?cs[cs.length-1].pctAcum:0;
-    const segs=cs.map((c,i)=>c.pctCorte>0?`<div class="aseg" style="width:${c.pctCorte}%;background:${SCOL[i%8]}"></div>`:'').join('');
-    const ctHTML=cs.length?cs.map((c,i)=>{
-      const fc=(c.fotos||[]).length;
-      const fg=(c.fotos||[]).map((f,fi)=>`
-        <div class="fth" onclick="openLB('${c.id}',${fi})">
+  const concs=proyectoData.conceptos||[];
+  if(!concs.length){document.getElementById('avance-lista').innerHTML='<div class="empty"><div class="ei">📐</div><p>Sin conceptos en el catálogo</p></div>';return;}
+  // Agrupar por partida > categoría > concepto
+  const gr=getPres(),gp=getGas();
+  const partsGrp={};
+  concs.forEach(c=>{
+    if(!partsGrp[c.partida])partsGrp[c.partida]={};
+    const cat=c.categoria||'Sin categoría';
+    if(!partsGrp[c.partida][cat])partsGrp[c.partida][cat]=[];
+    partsGrp[c.partida][cat].push(c);
+  });
+
+  function buildCorteHTML(c){
+    const cs=getCortesConc(c.id),avAc=cs.length?cs[cs.length-1].pctAcum:0;
+    const esContable=esUnidadContable(c.unidad);
+    const cantEj=cs.reduce((s,x)=>s+(x.cantCorte||0),0);
+    const segs=cs.map((ct,i)=>ct.pctCorte>0?`<div class="aseg" style="width:${ct.pctCorte}%;background:${SCOL[i%8]}"></div>`:'').join('');
+    const ctHTML=cs.length?cs.map((ct,i)=>{
+      const fc=(ct.fotos||[]).length;
+      const fg=(ct.fotos||[]).map((f,fi)=>`
+        <div class="fth" onclick="openLB('${ct.id}',${fi})">
           <img src="${f.data}" alt="">
           <div class="fov"><div class="fcap">${f.desc||''}</div></div>
-          ${esGerencia()?`<button class="fdel" onclick="event.stopPropagation();delFC('${c.id}','${f.id}')">✕</button>`:''}
+          ${esGerencia()?`<button class="fdel" onclick="event.stopPropagation();delFC('${ct.id}','${f.id}')">✕</button>`:''}
         </div>`).join('');
+      const cantLabel=esContable&&ct.cantCorte?`· ${fmtN(ct.cantCorte)} ${ct.unidad}`:'';
       return`${i>0?'<div class="ccon"></div>':''}
-      <div class="ci"><div class="ch" onclick="togC('${c.id}')">
-        <div class="cn ${c.pctAcum>=100?'done':''}">${i+1}</div>
-        <div class="cm"><div class="cmr"><span class="ctit">${c.nombre||'Corte '+(i+1)}</span>
-          <span class="badge ${c.pctAcum>=100?'bg':'ba'}" style="font-size:10px">+${c.pctCorte}%</span>
-          <span class="cac">${c.pctAcum}% acum.</span></div>
-          <div class="cfec">📅 ${fmtF(c.fecha)} · 📷 ${fc} fotos · ✍ ${c.creadoPor||'—'}</div>
+      <div class="ci"><div class="ch" onclick="togC('${ct.id}')">
+        <div class="cn ${ct.pctAcum>=100?'done':''}">${i+1}</div>
+        <div class="cm"><div class="cmr"><span class="ctit">${ct.nombre||'Corte '+(i+1)}</span>
+          <span class="badge ${ct.pctAcum>=100?'bg':'ba'}" style="font-size:10px">+${ct.pctCorte}% ${cantLabel}</span>
+          <span class="cac">${ct.pctAcum}% acum.</span></div>
+          <div class="cfec">📅 ${fmtF(ct.fecha)} · 📷 ${fc} fotos · ✍ ${ct.creadoPor||'—'}</div>
         </div>
         <div style="display:flex;gap:5px;align-items:center">
-          ${esGerencia()?`<button class="btn btn-sm btn-d" onclick="event.stopPropagation();elimC('${c.id}')">✕</button>`:''}
-          <span class="cchev" id="chev-${c.id}">▾</span>
+          ${esGerencia()?`<button class="btn btn-sm btn-d" onclick="event.stopPropagation();elimC('${ct.id}')">✕</button>`:''}
+          <span class="cchev" id="chev-${ct.id}">▾</span>
         </div>
       </div>
-      <div class="cbody" id="body-${c.id}">
-        ${c.obs?`<div style="font-size:13px;color:var(--tx2);background:var(--sur2);border-radius:7px;padding:9px 11px;margin-bottom:11px;border-left:3px solid var(--ac)">${c.obs}</div>`:''}
-        <div style="margin-bottom:11px"><div class="pb"><div class="pf pfc" style="width:${c.pctAcum}%"></div></div></div>
+      <div class="cbody" id="body-${ct.id}">
+        ${ct.obs?`<div style="font-size:13px;color:var(--tx2);background:var(--sur2);border-radius:7px;padding:9px 11px;margin-bottom:11px;border-left:3px solid var(--ac)">${ct.obs}</div>`:''}
+        <div style="margin-bottom:11px"><div class="pb"><div class="pf pfc" style="width:${ct.pctAcum}%"></div></div></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <span style="font-size:12px;font-weight:600">📷 Fotos (${fc})</span>
-          ${esGerencia()?`<button class="btn btn-sm" onclick="openAddFoto('${c.id}')">+ Fotos</button>`:''}
+          ${esGerencia()?`<button class="btn btn-sm" onclick="openAddFoto('${ct.id}')">+ Fotos</button>`:''}
         </div>
         <div class="fg-grid">${fg}${fc===0?'<div style="grid-column:1/-1;text-align:center;padding:14px;color:var(--tx3);font-size:12px;border:1px dashed var(--bo2);border-radius:7px">Sin evidencia fotográfica</div>':''}</div>
       </div></div>`;
-    }).join(''):`<div style="text-align:center;padding:18px;color:var(--tx3);font-size:13px">Sin cortes registrados.</div>`;
-    return`<div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-        <div style="font-size:15px;font-weight:600">${p}</div>
-        <div style="display:flex;gap:7px;align-items:center">
-          <span class="badge ${bc(avAc)}" style="font-size:13px;padding:4px 10px">${avAc}% total</span>
-          <span class="badge bx">${cs.length} cortes</span>
+    }).join(''):`<div style="text-align:center;padding:12px;color:var(--tx3);font-size:12px;font-style:italic">Sin cortes registrados</div>`;
+    return`<div style="margin-bottom:10px;border:0.5px solid var(--bo);border-radius:9px;overflow:hidden">
+      <div style="background:var(--sur2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <div>
+          <div style="font-size:13px;font-weight:600">${c.concepto}</div>
+          <div style="font-size:11px;color:var(--tx3)">${fmtN(c.cantidad)} ${c.unidad} total${esContable?` · Ejecutado: ${fmtN(cantEj)} ${c.unidad}`:''}</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="badge ${bc(avAc)}">${avAc}% avance</span>
+          <span class="badge bx" style="font-size:10px">${cs.length} cortes</span>
         </div>
       </div>
-      <div class="g2" style="gap:10px;margin-bottom:10px">
-        <div><div style="font-size:11px;color:var(--tx3);margin-bottom:4px">Avance acumulado</div>
-          <div class="abg">${segs}</div><div class="pl"><span>0%</span><span style="color:var(--ac);font-weight:600">${avAc}%</span></div></div>
-        <div><div style="font-size:11px;color:var(--tx3);margin-bottom:4px">Presupuesto ejercido (${pG}%)</div>
-          <div class="pb"><div class="pf ${cpct(pG)}" style="width:${Math.min(pG,100)}%"></div></div>
-          <div class="pl"><span>${fmt(g)}</span><span>${fmt(pr)}</span></div></div>
+      <div style="padding:10px 14px">
+        <div class="abg" style="margin-bottom:4px">${segs||'<div style="width:100%;height:9px;background:var(--sur3);border-radius:99px"></div>'}</div>
+        <div class="pl"><span>0%</span><span style="color:var(--ac);font-weight:600">${avAc}%</span></div>
+        <div style="margin-top:10px">${ctHTML}</div>
       </div>
-      <div style="border-top:0.5px solid var(--bo);padding-top:12px;margin-top:4px">
-        <div style="font-size:12px;font-weight:600;margin-bottom:8px">Historial de cortes</div>
-        ${ctHTML}
+    </div>`;
+  }
+
+  document.getElementById('avance-lista').innerHTML=Object.entries(partsGrp).map(([part,cats])=>{
+    const pr=gr[part]||0,g=gp[part]||0,pG=pct(g,pr);
+    const catBlocks=Object.entries(cats).map(([cat,items])=>`
+      <div style="margin-bottom:12px">
+        <div style="font-size:10px;font-weight:600;letter-spacing:.5px;color:var(--ac);margin-bottom:8px;text-transform:uppercase">📁 ${cat}</div>
+        ${items.map(c=>buildCorteHTML(c)).join('')}
+      </div>`).join('');
+    return`<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div style="font-size:15px;font-weight:700">${part}</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div style="font-size:11px;color:var(--tx3)">Gasto: ${fmt(g)} / ${fmt(pr)} (${pG}%)</div>
+          <div style="min-width:80px"><div class="pb"><div class="pf ${cpct(pG)}" style="width:${Math.min(pG,100)}%"></div></div></div>
+        </div>
       </div>
+      ${catBlocks}
     </div>`;
   }).join('');
 }
@@ -1074,53 +1196,141 @@ function renderPend(ctx){
 }
 function delPend(ctx,i){CAM.pend[ctx].splice(i,1);renderPend(ctx);}
 
+function onCorteCat(){
+  const cat=document.getElementById('cor-cat').value;
+  const sel=document.getElementById('cor-conc-sel');
+  if(!cat){sel.innerHTML='<option value="">-- Selecciona categoría primero --</option>';updCorteInfo();return;}
+  sel.innerHTML='<option value="">-- Selecciona concepto --</option>'+optsConc(cat);
+  _corConcId='';updCorteInfo();
+}
+function onCorteConc(){
+  _corConcId=document.getElementById('cor-conc-sel').value;
+  updCorteInfo();
+}
+let _corConcId='';
+
 function openModalCorte(){
   if(!esGerencia()){showToast('Sin permisos para registrar cortes','err');return;}
-  const ps=getPs();if(!ps.length){showToast('Primero agrega partidas','err');return;}
-  document.getElementById('cor-part').innerHTML=ps.map(p=>`<option>${p}</option>`).join('');
+  const cats=getCats();if(!cats.length){showToast('Primero agrega conceptos al catálogo','err');return;}
+  _corConcId='';
+  document.getElementById('cor-cat').innerHTML='<option value="">-- Categoría --</option>'+optsCat();
+  document.getElementById('cor-conc-sel').innerHTML='<option value="">-- Selecciona categoría primero --</option>';
   document.getElementById('cor-fec').value=td();
-  ['cor-pct','cor-nom','cor-obs'].forEach(id=>document.getElementById(id).value='');
+  ['cor-cant-corte','cor-nom','cor-obs'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('cor-pct').value='';
   document.getElementById('cgal-inp').value='';
   CAM.pend['c']=[];renderPend('c');
   document.getElementById('cpanel-gal').classList.add('active');document.getElementById('cpanel-cam').classList.remove('active');
   document.getElementById('ctab-gal').classList.add('active');document.getElementById('ctab-cam').classList.remove('active');
   updCorteInfo();openModal('modal-corte');
 }
+
 function updCorteInfo(){
-  const p=document.getElementById('cor-part').value,cs=getCortes(p),ac=cs.length?cs[cs.length-1].pctAcum:0;
-  document.getElementById('cor-info').style.display='block';
-  document.getElementById('cor-acum').textContent=ac+'%';document.getElementById('cor-nump').textContent=cs.length;
-  document.getElementById('cor-hint').textContent=ac>0?`Ya tiene ${ac}% acumulado.`:'Primer corte.';
+  const concId=_corConcId||document.getElementById('cor-conc-sel')?.value;
+  const conc=concId?getConcById(concId):null;
+  const cs=conc?getCortesConc(conc.id):[];
+  const ac=cs.length?cs[cs.length-1].pctAcum:0;
+  const cantTotal=conc?conc.cantidad:0;
+  const cantEjecutada=cs.reduce((s,c)=>s+(c.cantCorte||0),0);
+  const cantRestante=Math.max(0,cantTotal-cantEjecutada);
+  const esContable=conc&&esUnidadContable(conc.unidad);
+  const infoEl=document.getElementById('cor-info');
+  const modoEl=document.getElementById('cor-modo-wrap');
+  const pctWrap=document.getElementById('cor-pct-wrap');
+  const cantWrap=document.getElementById('cor-cant-wrap');
+  if(infoEl) infoEl.style.display=conc?'block':'none';
+  if(conc){
+    document.getElementById('cor-acum').textContent=ac+'%';
+    document.getElementById('cor-nump').textContent=cs.length;
+    document.getElementById('cor-hint').textContent=conc
+      ?`${conc.concepto} · ${fmtN(cantTotal)} ${conc.unidad} total`
+      :'Primer corte.';
+    // Mostrar modo según unidad
+    if(esContable){
+      if(modoEl) modoEl.style.display='block';
+      if(pctWrap) pctWrap.style.display='none';
+      if(cantWrap) cantWrap.style.display='block';
+      document.getElementById('cor-cant-label').textContent=`Cantidad ejecutada este corte (${conc.unidad}) — Restante: ${fmtN(cantRestante)} ${conc.unidad}`;
+    } else {
+      if(modoEl) modoEl.style.display='none';
+      if(pctWrap) pctWrap.style.display='block';
+      if(cantWrap) cantWrap.style.display='none';
+    }
+  }
   updCortePrev();
 }
+
 function updCortePrev(){
-  const p=document.getElementById('cor-part').value,cs=getCortes(p),ac=cs.length?cs[cs.length-1].pctAcum:0;
-  document.getElementById('cor-prev').textContent=Math.min(100,ac+(parseFloat(document.getElementById('cor-pct').value)||0))+'%';
+  const concId=_corConcId||document.getElementById('cor-conc-sel')?.value;
+  const conc=concId?getConcById(concId):null;
+  const cs=conc?getCortesConc(conc.id):[];
+  const ac=cs.length?cs[cs.length-1].pctAcum:0;
+  const cantTotal=conc?conc.cantidad:0;
+  const esContable=conc&&esUnidadContable(conc.unidad);
+  let nuevoPct=0;
+  if(esContable){
+    const cantEj=cs.reduce((s,c)=>s+(c.cantCorte||0),0);
+    const cantCorteN=parseFloat(document.getElementById('cor-cant-corte')?.value)||0;
+    nuevoPct=cantTotal>0?Math.min(100,Math.round((cantEj+cantCorteN)/cantTotal*100)):0;
+    document.getElementById('cor-pct').value=nuevoPct||'';
+  } else {
+    nuevoPct=Math.min(100,ac+(parseFloat(document.getElementById('cor-pct').value)||0));
+  }
+  document.getElementById('cor-prev').textContent=nuevoPct+'%';
 }
 function cerrarCorte(){stopCam('c');CAM.pend['c']=[];closeModal('modal-corte');}
 
 async function guardarCorte(){
-  const partida=document.getElementById('cor-part').value;
-  const pctNv=parseFloat(document.getElementById('cor-pct').value)||0;
-  if(!pctNv){showToast('Ingresa el % de avance','err');return;}
-  const prev=getCortes(partida),acPrev=prev.length?prev[prev.length-1].pctAcum:0;
+  const concId=_corConcId||document.getElementById('cor-conc-sel')?.value;
+  if(!concId){showToast('Selecciona un concepto','err');return;}
+  const conc=getConcById(concId);
+  if(!conc){showToast('Concepto no encontrado','err');return;}
+  const esContable=esUnidadContable(conc.unidad);
+  let pctNv=0,cantCorte=0;
+  if(esContable){
+    cantCorte=parseFloat(document.getElementById('cor-cant-corte').value)||0;
+    if(!cantCorte){showToast('Ingresa la cantidad ejecutada en este corte','err');return;}
+    const prev=getCortesConc(concId),cantEj=prev.reduce((s,c)=>s+(c.cantCorte||0),0);
+    pctNv=conc.cantidad>0?Math.min(100,Math.round((cantEj+cantCorte)/conc.cantidad*100)):0;
+    const acPrev=prev.length?prev[prev.length-1].pctAcum:0;
+    pctNv=Math.max(0,pctNv-acPrev); // delta de este corte
+  } else {
+    pctNv=parseFloat(document.getElementById('cor-pct').value)||0;
+    if(!pctNv){showToast('Ingresa el % de avance','err');return;}
+  }
+  const prev=getCortesConc(concId),acPrev=prev.length?prev[prev.length-1].pctAcum:0;
   const pctAcum=Math.min(100,acPrev+pctNv);
   const fecha=document.getElementById('cor-fec').value||td();
   const fotos=(CAM.pend['c']||[]).map(f=>({id:rnd(),data:f.data,desc:'',fecha,fromCam:f.fromCam}));
-  const item={id:rnd(),partida,nombre:document.getElementById('cor-nom').value.trim()||('Corte '+(prev.length+1)),
-    fecha,pctCorte:pctNv,pctAcum,obs:document.getElementById('cor-obs').value.trim(),fotos,
+  const item={id:rnd(),conceptoId:concId,partida:conc.partida,categoria:conc.categoria||'',
+    nombre:document.getElementById('cor-nom').value.trim()||('Corte '+(prev.length+1)),
+    fecha,pctCorte:pctNv,pctAcum,cantCorte,unidad:conc.unidad,
+    obs:document.getElementById('cor-obs').value.trim(),fotos,
     creadoPor:currentProfile.nombre||currentUser.email};
   await saveItem('cortes',item);
-  cerrarCorte();renderAv();updHdr();showToast('Corte guardado — Acumulado '+pctAcum+'%');
+  _corConcId='';cerrarCorte();renderAv();updHdr();showToast('Corte guardado — Acumulado '+pctAcum+'%');
 }
 
 async function elimC(id){
   const c=(proyectoData.cortes||[]).find(x=>String(x.id)===String(id));if(!c)return;
   if(!confirm('¿Eliminar este corte?'))return;
-  const partida=c.partida;
+  const concId=c.conceptoId;
   await deleteItem('cortes',id);
-  const cs=proyectoData.cortes.filter(x=>x.partida===partida).sort((a,b)=>a.fecha.localeCompare(b.fecha));
-  let ac=0; for(const x of cs){ac=Math.min(100,ac+x.pctCorte);x.pctAcum=ac;await saveItem('cortes',x);}
+  // Recalcular acumulados del mismo concepto
+  const cs=(proyectoData.cortes||[]).filter(x=>String(x.conceptoId)===String(concId)).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  const conc=getConcById(concId);
+  let ac=0,cantAc=0;
+  for(const x of cs){
+    if(conc&&esUnidadContable(conc.unidad)){
+      cantAc+=x.cantCorte||0;
+      ac=conc.cantidad>0?Math.min(100,Math.round(cantAc/conc.cantidad*100)):ac;
+      const prev=ac-(cs[cs.indexOf(x)-1]?.pctAcum||0);
+      x.pctCorte=Math.max(0,prev);x.pctAcum=ac;
+    } else {
+      ac=Math.min(100,ac+x.pctCorte);x.pctAcum=ac;
+    }
+    await saveItem('cortes',x);
+  }
   renderAv();showToast('Corte eliminado');
 }
 
@@ -1177,14 +1387,27 @@ let _recTipo='material',_recEditId=null;
 function setRecTipo(t){_recTipo=t;['material','mano_obra'].forEach(x=>{document.getElementById('rtab-'+x).classList.toggle('active',x===t);});}
 function updRecTotal(){document.getElementById('rec-tot').textContent=fmt((parseFloat(document.getElementById('rec-cant').value)||0)*(parseFloat(document.getElementById('rec-precio').value)||0));}
 
+function onRecCat(){
+  const cat=document.getElementById('rec-cat').value;
+  const sel=document.getElementById('rec-conc-sel');
+  if(!cat){sel.innerHTML='<option value="">-- Selecciona categoría primero --</option>';return;}
+  sel.innerHTML='<option value="">-- Selecciona concepto --</option>'+optsConc(cat);
+}
+
 function openModalRecurso(editId){
   if(!esGerencia()){showToast('Sin permisos para editar recursos','err');return;}
-  const ps=getPs();if(!ps.length){showToast('Primero agrega partidas','err');return;}
+  const cats=getCats();if(!cats.length){showToast('Primero agrega conceptos al catálogo','err');return;}
   _recEditId=editId||null;
   document.getElementById('rec-modal-titulo').textContent=editId?'Editar recurso':'Agregar recurso';
-  document.getElementById('rec-part').innerHTML=ps.map(p=>`<option>${p}</option>`).join('');
-  if(editId){const r=(proyectoData.recursos||[]).find(x=>String(x.id)===String(editId));if(!r)return;
-    document.getElementById('rec-part').value=r.partida;setRecTipo(r.tipo);
+  document.getElementById('rec-cat').innerHTML='<option value="">-- Categoría --</option>'+optsCat();
+  document.getElementById('rec-conc-sel').innerHTML='<option value="">-- Selecciona categoría primero --</option>';
+  if(editId){
+    const r=(proyectoData.recursos||[]).find(x=>String(x.id)===String(editId));if(!r)return;
+    // Preselect cat and concepto
+    document.getElementById('rec-cat').value=r.categoria||'';
+    if(r.categoria) document.getElementById('rec-conc-sel').innerHTML='<option value="">-- Selecciona --</option>'+optsConc(r.categoria,r.conceptoId);
+    if(r.conceptoId) document.getElementById('rec-conc-sel').value=r.conceptoId;
+    setRecTipo(r.tipo);
     document.getElementById('rec-desc').value=r.desc;document.getElementById('rec-uni').value=r.unidad;
     document.getElementById('rec-cant').value=r.cantidad;document.getElementById('rec-precio').value=r.precio;
     document.getElementById('rec-notas').value=r.notas||'';
@@ -1196,9 +1419,12 @@ function openModalRecurso(editId){
 }
 
 async function guardarRecurso(){
+  const concId=document.getElementById('rec-conc-sel').value;
   const desc=document.getElementById('rec-desc').value.trim(),cant=parseFloat(document.getElementById('rec-cant').value)||0,precio=parseFloat(document.getElementById('rec-precio').value)||0;
+  if(!concId){showToast('Selecciona un concepto','err');return;}
   if(!desc||!cant||!precio){showToast('Completa descripción, cantidad y precio','err');return;}
-  const item={id:_recEditId||rnd(),partida:document.getElementById('rec-part').value,tipo:_recTipo,desc,
+  const conc=getConcById(concId);
+  const item={id:_recEditId||rnd(),partida:conc?conc.partida:'',categoria:document.getElementById('rec-cat').value,conceptoId:concId,tipo:_recTipo,desc,
     unidad:document.getElementById('rec-uni').value,cantidad:cant,precio,notas:document.getElementById('rec-notas').value.trim()};
   await saveItem('recursos',item);
   closeModal('modal-recurso');renderRecursos();showToast(_recEditId?'Recurso actualizado':'Recurso agregado');
@@ -1210,38 +1436,116 @@ async function elimRecurso(id){
 }
 
 function renderRecursos(){
-  const gr={};(proyectoData.recursos||[]).forEach(r=>{if(!gr[r.partida])gr[r.partida]=[];gr[r.partida].push(r);});
-  const tot=(proyectoData.recursos||[]).reduce((s,r)=>s+r.cantidad*r.precio,0);
-  const totMat=(proyectoData.recursos||[]).filter(r=>r.tipo==='material').reduce((s,r)=>s+r.cantidad*r.precio,0);
-  const totMO=(proyectoData.recursos||[]).reduce((s,r)=>s+r.cantidad*r.precio,0)-totMat;
+  const recAll=proyectoData.recursos||[];
+  const tot=recAll.reduce((s,r)=>s+r.cantidad*r.precio,0);
+  const totMat=recAll.filter(r=>r.tipo==='material').reduce((s,r)=>s+r.cantidad*r.precio,0);
+  const totMO=tot-totMat;
   document.getElementById('rec-met').innerHTML=`
     <div class="met ca"><div class="ml">Total recursos</div><div class="mv">${fmt(tot)}</div></div>
     <div class="met cb"><div class="ml">Materiales</div><div class="mv">${fmt(totMat)}</div></div>
     <div class="met cg"><div class="ml">Mano de obra</div><div class="mv">${fmt(totMO)}</div></div>`;
   const recBtnWrap = document.getElementById('rec-btn-wrap');
   if(recBtnWrap) recBtnWrap.innerHTML = esGerencia() ? `<button class="btn btn-p" onclick="openModalRecurso()">+ Agregar recurso</button>` : '';
-  const ps=getPs();
+
+  // Construir jerarquía desde el CATÁLOGO (fuente de verdad)
+  // Partida → Categoría → Concepto → recursos asociados
+  const concs = proyectoData.conceptos||[];
+  const ps = getPs();
+
+  if(!ps.length){
+    document.getElementById('rec-lista').innerHTML='<div class="empty"><div class="ei">🧱</div><p>Sin partidas en el catálogo</p></div>';
+    return;
+  }
+
+  // Agrupar conceptos por partida > categoría
+  const catGrp = {}; // catGrp[partida][categoria] = [concepto,...]
+  concs.forEach(c=>{
+    const p=c.partida||'Sin partida';
+    const cat=c.categoria||'Sin categoría';
+    if(!catGrp[p]) catGrp[p]={};
+    if(!catGrp[p][cat]) catGrp[p][cat]=[];
+    catGrp[p][cat].push(c);
+  });
+
+  // Indexar recursos por conceptoId
+  const recByConc={};
+  recAll.forEach(r=>{
+    const key=r.conceptoId||('_sin_'+r.partida+'_'+r.desc);
+    if(!recByConc[key])recByConc[key]=[];
+    recByConc[key].push(r);
+  });
+
+  // También capturar recursos sin conceptoId (datos viejos)
+  const recSinConc=recAll.filter(r=>!r.conceptoId);
+
+  function filaRecurso(r){
+    return`<tr>
+      <td><span class="badge ${r.tipo==='material'?'bb':'bg'}" style="font-size:10px">${r.tipo==='material'?'🧱 Mat.':'👷 M.O.'}</span></td>
+      <td><strong>${r.desc}</strong>${r.notas?`<br><small style="color:var(--tx3)">${r.notas}</small>`:''}</td>
+      <td>${fmtN(r.cantidad)}</td><td>${r.unidad}</td><td>${fmt(r.precio)}</td>
+      <td style="font-weight:600">${fmt(r.cantidad*r.precio)}</td>
+      ${esGerencia()?`<td><button class="btn btn-sm" onclick="openModalRecurso('${r.id}')">✏️</button> <button class="btn btn-sm btn-d" onclick="elimRecurso('${r.id}')">✕</button></td>`:''}</tr>`;
+  }
+
+  function tablaRecursos(items){
+    if(!items.length) return '';
+    return`<div class="tw"><table style="width:100%">
+      <thead><tr><th>Tipo</th><th>Descripción recurso</th><th>Cant.</th><th>Unidad</th><th>P.U.</th><th>Total</th>${esGerencia()?'<th></th>':''}</tr></thead>
+      <tbody>${items.map(filaRecurso).join('')}</tbody>
+    </table></div>`;
+  }
+
   document.getElementById('rec-lista').innerHTML=ps.map(p=>{
-    const items=gr[p]||[];
-    const totP=items.reduce((s,r)=>s+r.cantidad*r.precio,0);
-    const mats=items.filter(r=>r.tipo==='material'),mos=items.filter(r=>r.tipo==='mano_obra');
-    return`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-      <div style="font-size:15px;font-weight:600">${p}</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <div style="font-size:13px;font-weight:700;color:var(--ac)">${fmt(totP)}</div>
-        ${esGerencia()?`<button class="btn btn-sm btn-p" onclick="openModalRecurso();setTimeout(()=>document.getElementById('rec-part').value='${p}',50)">+ Recurso</button>`:''}
-      </div></div>
-      ${items.length?`<div class="tw"><table><thead><tr><th>Tipo</th><th>Descripción</th><th>Cant.</th><th>Unidad</th><th>P.U.</th><th>Total</th>${esGerencia()?'<th></th>':''}</tr></thead>
-      <tbody>${[...mats,...mos].map(r=>`<tr>
-        <td><span class="badge ${r.tipo==='material'?'bb':'bg'}" style="font-size:10px">${r.tipo==='material'?'🧱 Mat.':'👷 M.O.'}</span></td>
-        <td><strong>${r.desc}</strong>${r.notas?`<br><small style="color:var(--tx3)">${r.notas}</small>`:''}</td>
-        <td>${fmtN(r.cantidad)}</td><td>${r.unidad}</td><td>${fmt(r.precio)}</td>
-        <td style="font-weight:600">${fmt(r.cantidad*r.precio)}</td>
-        ${esGerencia()?`<td><button class="btn btn-sm" onclick="openModalRecurso('${r.id}')">✏️</button> <button class="btn btn-sm btn-d" onclick="elimRecurso('${r.id}')">✕</button></td>`:''}</tr>`).join('')}
-      </tbody></table></div>`
-      :`<div style="text-align:center;padding:16px;color:var(--tx3);border:1px dashed var(--bo2);border-radius:8px">Sin recursos</div>`}
+    const cats=catGrp[p]||{};
+    const recsDePartida=recAll.filter(r=>r.partida===p);
+    const totP=recsDePartida.reduce((s,r)=>s+r.cantidad*r.precio,0);
+
+    const catBlocks=Object.entries(cats).map(([cat,concItems])=>{
+      const concRows=concItems.map(c=>{
+        const recsConc=(recByConc[c.id]||[]);
+        if(!recsConc.length) return ''; // ocultar conceptos sin recursos
+        const totConc=recsConc.reduce((s,r)=>s+r.cantidad*r.precio,0);
+        return`<div style="margin-bottom:8px;padding:10px 12px;background:var(--sur2);border-radius:8px;border-left:3px solid var(--bo2)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+            <div>
+              <div style="font-size:13px;font-weight:600">${c.concepto}</div>
+              <div style="font-size:11px;color:var(--tx3)">${fmtN(c.cantidad)} ${c.unidad}</div>
+            </div>
+            <span style="font-size:13px;font-weight:700;color:var(--ac)">${fmt(totConc)}</span>
+          </div>
+          ${tablaRecursos(recsConc)}
+        </div>`;
+      }).filter(Boolean).join('');
+      if(!concRows) return ''; // ocultar categorías sin recursos
+      return`<div style="margin-bottom:12px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.8px;color:var(--ac);text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:6px">
+          <span>📁</span><span>${cat}</span>
+        </div>
+        ${concRows}
+      </div>`;
+    }).filter(Boolean).join('');
+
+    // Recursos sin conceptoId de esta partida (datos anteriores)
+    const viejos=recSinConc.filter(r=>r.partida===p);
+    const viejosBlock=viejos.length?`
+      <div style="margin-bottom:12px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.8px;color:var(--tx3);text-transform:uppercase;margin-bottom:8px">📦 Sin concepto asignado</div>
+        ${tablaRecursos(viejos)}
+      </div>`:'';
+
+    const hayContenido=catBlocks||viejosBlock;
+
+    return`<div class="card" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${hayContenido?'14':'0'}px;flex-wrap:wrap;gap:8px">
+        <div style="font-size:16px;font-weight:700">${p}</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          ${totP>0?`<span style="font-size:14px;font-weight:700;color:var(--ac)">${fmt(totP)}</span>`:''}
+          ${esGerencia()?`<button class="btn btn-sm btn-p" onclick="openModalRecurso()">+ Recurso</button>`:''}
+        </div>
+      </div>
+      ${hayContenido||`<div style="text-align:center;padding:16px;color:var(--tx3);font-size:13px;border:1px dashed var(--bo2);border-radius:8px">Sin recursos — toca + Recurso para agregar</div>`}
     </div>`;
-  }).join('')||'<div class="empty"><div class="ei">🧱</div><p>Sin partidas en el catálogo</p></div>';
+  }).join('');
 }
 
 // ============================================================
@@ -1393,26 +1697,56 @@ function autoSemFin(){
 function addSemPartida(data){_semPartidas.push(data||{partida:'',pct_prog:100,desc:'',personal_ids:[]});renderSemPartidas();}
 function updSemPersonal(i){const sel=document.getElementById('sp-pers-'+i);if(sel)_semPartidas[i].personal_ids=Array.from(sel.selectedOptions).map(o=>o.value);}
 
+function onSemCat(i){
+  const cat=document.getElementById('sp-cat-'+i)?.value;
+  const sel=document.getElementById('sp-conc-'+i);
+  if(!sel)return;
+  if(!cat){sel.innerHTML='<option value="">-- Selecciona categoría primero --</option>';_semPartidas[i].conceptoId='';return;}
+  sel.innerHTML='<option value="">-- Selecciona concepto --</option>'+optsConc(cat);
+  _semPartidas[i].categoria=cat;_semPartidas[i].conceptoId='';
+}
+function onSemConc(i){
+  const concId=document.getElementById('sp-conc-'+i)?.value;
+  if(!concId)return;
+  const conc=getConcById(concId);
+  _semPartidas[i].conceptoId=concId;
+  _semPartidas[i].partida=conc?conc.partida:'';
+  _semPartidas[i].concepto=conc?conc.concepto:'';
+}
+
 function renderSemPartidas(){
-  const ps=getPs();const opts=ps.map(p=>`<option value="${p}">${p}</option>`).join('');
+  const cats=getCats();
   const pers=proyectoData.personal||[];
   document.getElementById('sem-partidas-wrap').innerHTML=_semPartidas.length
     ?_semPartidas.map((p,i)=>{
+      const catOpts='<option value="">-- Categoría --</option>'+cats.map(c=>`<option value="${c}" ${c===p.categoria?'selected':''}>${c}</option>`).join('');
+      const concOpts=p.categoria?('<option value="">-- Concepto --</option>'+optsConc(p.categoria,p.conceptoId)):'<option value="">-- Selecciona categoría primero --</option>';
       const persOpts=pers.map(per=>{const sel=(p.personal_ids||[]).includes(String(per.id))?'selected':'';return`<option value="${per.id}" ${sel}>${per.nombre} — ${per.especialidad}</option>`;}).join('');
       return`<div style="padding:12px;background:var(--sur2);border-radius:9px;border:0.5px solid var(--bo);margin-bottom:10px">
-        <div style="display:grid;grid-template-columns:1fr 100px auto;gap:8px;align-items:end;margin-bottom:10px">
-          <div class="fg"><label style="font-size:11px">Partida</label><select id="sp-part-${i}" onchange="_semPartidas[${i}].partida=this.value"><option value="">-- Seleccionar --</option>${opts}</select></div>
-          <div class="fg"><label style="font-size:11px">% a avanzar</label><input type="number" min="0" max="100" value="${p.pct_prog}" onchange="_semPartidas[${i}].pct_prog=parseFloat(this.value)||0" style="padding:8px;border:0.5px solid var(--bo2);border-radius:7px;font-size:13px;font-family:var(--ff)"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 100px auto;gap:8px;align-items:end;margin-bottom:10px">
+          <div class="fg"><label style="font-size:11px">Categoría</label><select id="sp-cat-${i}" onchange="onSemCat(${i})">${catOpts}</select></div>
+          <div class="fg"><label style="font-size:11px">Concepto</label><select id="sp-conc-${i}" onchange="onSemConc(${i})">${concOpts}</select></div>
+          <div class="fg"><label style="font-size:11px">% programado</label><input type="number" min="0" max="100" value="${p.pct_prog||100}" onchange="_semPartidas[${i}].pct_prog=parseFloat(this.value)||0" style="padding:8px;border:0.5px solid var(--bo2);border-radius:7px;font-size:13px;font-family:var(--ff)"></div>
           <button class="btn btn-sm btn-d" onclick="_semPartidas.splice(${i},1);renderSemPartidas()" style="align-self:center">✕</button>
         </div>
-        <div class="fg" style="margin-bottom:8px"><label style="font-size:11px">Actividad</label><input type="text" value="${p.desc||''}" placeholder="Descripción..." onchange="_semPartidas[${i}].desc=this.value" style="padding:8px;border:0.5px solid var(--bo2);border-radius:7px;font-size:13px;font-family:var(--ff)"></div>
+        <div class="fg" style="margin-bottom:8px"><label style="font-size:11px">Actividad / Descripción</label><input type="text" value="${p.desc||''}" placeholder="Descripción..." onchange="_semPartidas[${i}].desc=this.value" style="padding:8px;border:0.5px solid var(--bo2);border-radius:7px;font-size:13px;font-family:var(--ff)"></div>
         ${pers.length?`<div class="fg"><label style="font-size:11px">👷 Personal asignado</label><select id="sp-pers-${i}" multiple onchange="updSemPersonal(${i})" style="padding:6px;border:0.5px solid var(--bo2);border-radius:7px;font-size:12px;font-family:var(--ff);min-height:70px">${persOpts}</select><span style="font-size:10px;color:var(--tx3)">Ctrl + toque para seleccionar varios</span></div>`:''}
       </div>`;}).join('')
-    :`<div style="text-align:center;padding:14px;color:var(--tx3);border:1px dashed var(--bo2);border-radius:8px">Toca <strong>+ Agregar partida</strong></div>`;
-  setTimeout(()=>{_semPartidas.forEach((p,i)=>{
-    const sel=document.getElementById('sp-part-'+i);if(sel)sel.value=p.partida||'';
-    const sp=document.getElementById('sp-pers-'+i);if(sp&&p.personal_ids)Array.from(sp.options).forEach(o=>o.selected=(p.personal_ids||[]).includes(o.value));
-  });},15);
+    :`<div style="text-align:center;padding:14px;color:var(--tx3);border:1px dashed var(--bo2);border-radius:8px">Toca <strong>+ Agregar actividad</strong></div>`;
+}
+
+function updSemResponsable(selVal){
+  const pers=proyectoData.personal||[];
+  const wrap=document.getElementById('sem-resp-wrap');
+  if(!wrap)return;
+  if(!pers.length){
+    wrap.innerHTML=`<input id="sem-responsable" type="text" value="${selVal}" placeholder="Nombre del responsable" style="padding:8px 10px;border:0.5px solid var(--bo2);border-radius:7px;font-size:13px;font-family:var(--ff);width:100%">`;
+    return;
+  }
+  wrap.innerHTML=`<select id="sem-responsable-select" style="padding:8px 10px;border:0.5px solid var(--bo2);border-radius:7px;font-size:13px;font-family:var(--ff);width:100%">
+    <option value="">-- Sin responsable --</option>
+    ${pers.map(p=>`<option value="${p.nombre}" ${p.nombre===selVal?'selected':''}>${p.nombre} — ${p.especialidad}</option>`).join('')}
+  </select>`;
 }
 
 function openModalSemana(editId){
@@ -1424,12 +1758,14 @@ function openModalSemana(editId){
     document.getElementById('sem-modal-titulo').textContent='Editar semana '+sem.num;
     document.getElementById('sem-num').value=sem.num||'';document.getElementById('sem-ini').value=sem.ini;
     document.getElementById('sem-fin').value=sem.fin;document.getElementById('sem-dias').value=sem.dias||5;
-    document.getElementById('sem-personal').value=sem.personal||'';document.getElementById('sem-responsable').value=sem.responsable||'';
+    document.getElementById('sem-personal').value=sem.personal||'';
+    updSemResponsable(sem.responsable||'');
     document.getElementById('sem-condiciones').value=sem.condiciones||'';
     _semPartidas=(sem.partidas||[]).map(p=>({...p}));
   } else {
     document.getElementById('sem-modal-titulo').textContent='Nueva semana';
-    ['sem-num','sem-ini','sem-fin','sem-responsable','sem-condiciones'].forEach(id=>document.getElementById(id).value='');
+    ['sem-num','sem-ini','sem-fin','sem-condiciones'].forEach(id=>document.getElementById(id).value='');
+    updSemResponsable('');
     document.getElementById('sem-dias').value=5;document.getElementById('sem-personal').value='';
     const hoy=new Date();const diff=hoy.getDay()===0?1:8-hoy.getDay();hoy.setDate(hoy.getDate()+diff);
     document.getElementById('sem-ini').value=hoy.toISOString().split('T')[0];autoSemFin();
@@ -1445,7 +1781,7 @@ async function guardarSemana(){
   const sem={id:_semEditId||rnd(),num:parseInt(document.getElementById('sem-num').value)||((proyectoData.semanas||[]).length+1),
     ini,fin,dias:parseInt(document.getElementById('sem-dias').value)||5,
     personal:parseFloat(document.getElementById('sem-personal').value)||0,
-    responsable:document.getElementById('sem-responsable').value.trim(),
+    responsable:(document.getElementById('sem-responsable-select')?.value||document.getElementById('sem-responsable')?.value||'').trim(),
     condiciones:document.getElementById('sem-condiciones').value.trim(),
     partidas:validas,
     eval:_semEditId?((proyectoData.semanas||[]).find(s=>String(s.id)===String(_semEditId))||{}).eval||null:null,
@@ -1525,11 +1861,20 @@ function renderPrograma(){
     const ev=sem.eval,cum=ev?.cumplimiento_global??null;
     const cumCol=cum===null?'bx':cum>=80?'bg':cum>=60?'ba':'br';
     const estIcon=sem.cerrada?'✅':new Date(sem.fin+'T23:59:00')<new Date()?'⏰':'🔄';
-    const partRows=(sem.partidas||[]).filter(p=>p.partida).map(p=>{
+    const partRows=(sem.partidas||[]).filter(p=>p.partida||p.conceptoId).map(p=>{
       const ep=ev?(ev.partidas||[]).find(x=>x.partida===p.partida):null;
       const pReal=ep?.pct_real??null,cumP=ep?.cumplimiento??null;
       const persN=(p.personal_ids||[]).map(pid=>{const per=(proyectoData.personal||[]).find(x=>String(x.id)===String(pid));return per?per.nombre.split(' ')[0]:'';}).filter(Boolean).join(', ');
-      return`<tr><td><strong>${p.partida}</strong>${p.desc?`<br><small style="color:var(--tx3)">${p.desc}</small>`:''}${persN?`<br><span class="badge bb" style="font-size:10px;margin-top:3px">👷 ${persN}</span>`:''}</td>
+      const concNom=p.conceptoId?((proyectoData.conceptos||[]).find(c=>String(c.id)===String(p.conceptoId))?.concepto||''):p.concepto||'';
+      const catNom=p.categoria||'';
+      return`<tr>
+        <td>
+          <div style="font-size:12px;font-weight:700">${p.partida||'—'}</div>
+          ${catNom?`<div style="font-size:10px;color:var(--ac);font-weight:600;margin-top:1px">📁 ${catNom}</div>`:''}
+          ${concNom?`<div style="font-size:12px;color:var(--tx2);margin-top:1px">${concNom}</div>`:''}
+          ${p.desc?`<div style="font-size:11px;color:var(--tx3);font-style:italic">${p.desc}</div>`:''}
+          ${persN?`<span class="badge bb" style="font-size:10px;margin-top:3px">👷 ${persN}</span>`:''}
+        </td>
         <td style="text-align:center;font-weight:600;color:var(--bl)">${p.pct_prog||100}%</td>
         <td style="text-align:center;font-weight:600;color:var(--ac)">${pReal!==null?pReal+'%':'—'}</td>
         <td style="text-align:center">${cumP!==null?`<span class="badge ${cumP>=100?'bg':cumP>=70?'ba':'br'}">${cumP}%</span>`:'<span class="badge bx">—</span>'}</td></tr>`;
@@ -1705,11 +2050,45 @@ function renderRep(){
     }
   }
   const gr=getPres(),gp=getGas(),ps=Object.keys(gr);
-  document.getElementById('rep-part').innerHTML=ps.map(p=>{
-    const pr=gr[p],g=gp[p]||0,pG=pct(g,pr),avP=getAv(p),nc=getCortes(p).length;
-    return`<div class="sr"><div style="flex:1;font-size:13px"><strong>${p}</strong> <span style="color:var(--tx3);font-size:11px">(${nc} cortes)</span></div>
-    <div style="font-size:12px;color:var(--tx3);margin-right:10px">${fmt(g)} / ${fmt(pr)}</div>
-    <span class="badge ${avP===100?'bg':avP>0?'ba':'bx'}">${avP===100?'Completado':avP>0?'En proceso':'Pendiente'} — ${avP}%</span></div>`;
+  // Agrupar conceptos por partida > categoría
+  const concsAll=proyectoData.conceptos||[];
+  const repPartsGrp={};
+  concsAll.forEach(c=>{
+    if(!repPartsGrp[c.partida])repPartsGrp[c.partida]={};
+    const cat=c.categoria||'Sin categoría';
+    if(!repPartsGrp[c.partida][cat])repPartsGrp[c.partida][cat]=[];
+    repPartsGrp[c.partida][cat].push(c);
+  });
+  document.getElementById('rep-part').innerHTML=Object.entries(repPartsGrp).map(([part,cats])=>{
+    const pr=gr[part]||0,g=gp[part]||0,pG=pct(g,pr);
+    const partAv=Math.round(Object.values(cats).flat().reduce((s,c)=>s+getAvConc(c.id),0)/Math.max(1,Object.values(cats).flat().length));
+    const catBlocks=Object.entries(cats).map(([cat,items])=>`
+      <div style="margin:8px 0 4px">
+        <div style="font-size:10px;font-weight:600;letter-spacing:.5px;color:var(--ac);text-transform:uppercase;margin-bottom:5px">📁 ${cat}</div>
+        ${items.map(c=>{
+          const avC=getAvConc(c.id);
+          const csC=getCortesConc(c.id);
+          return`<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--sur2);border-radius:7px;margin-bottom:4px;flex-wrap:wrap">
+            <div style="flex:1;min-width:150px">
+              <div style="font-size:13px">${c.concepto}</div>
+              <div style="font-size:10px;color:var(--tx3)">${fmtN(c.cantidad)} ${c.unidad} · ${csC.length} cortes</div>
+            </div>
+            <div style="min-width:90px"><div class="pb" style="height:5px"><div class="pf ${avC>=100?'pfg':avC>0?'pfa':'pfg'}" style="width:${avC}%"></div></div></div>
+            <span class="badge ${avC===100?'bg':avC>0?'ba':'bx'}" style="font-size:10px;min-width:70px;text-align:center">${avC===100?'✓ Completado':avC>0?'En proceso':'Pendiente'} ${avC}%</span>
+          </div>`;
+        }).join('')}
+      </div>`).join('');
+    return`<div style="border:0.5px solid var(--bo);border-radius:10px;overflow:hidden;margin-bottom:10px">
+      <div style="background:var(--sur2);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div style="font-size:14px;font-weight:700">${part}</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--tx3)">${fmt(g)} / ${fmt(pr)}</span>
+          <div style="min-width:80px"><div class="pb"><div class="pf ${cpct(pG)}" style="width:${Math.min(pG,100)}%"></div></div></div>
+          <span class="badge ${partAv===100?'bg':partAv>0?'ba':'bx'}" style="font-size:11px">${partAv}% av. · ${pG}% ejercido</span>
+        </div>
+      </div>
+      <div style="padding:10px 14px">${catBlocks}</div>
+    </div>`;
   }).join('')||'<p style="color:var(--tx3)">Sin datos</p>';
   let al='';
   ps.forEach(p=>{const pr=gr[p],g=gp[p]||0,r=g/pr,avP=getAv(p);
@@ -1796,10 +2175,11 @@ function importarXLSX(evt){
 // ============================================================
 function openModal(id){
   if(id==='modal-mov'){
-    const ps=getPs();if(!ps.length){showToast('Primero agrega partidas','err');return;}
-    document.getElementById('m-part').innerHTML=ps.map(p=>`<option>${p}</option>`).join('');
+    const cats=getCats();if(!cats.length){showToast('Primero agrega conceptos al catálogo','err');return;}
+    document.getElementById('m-cat').innerHTML='<option value="">-- Categoría --</option>'+optsCat();
+    document.getElementById('m-conc-sel').innerHTML='<option value="">-- Selecciona categoría primero --</option>';
     document.getElementById('m-fec').value=td();
-    ['m-con','m-pro','m-ref','m-obs','m-mon'].forEach(x=>document.getElementById(x).value='');
+    ['m-pro','m-ref','m-obs','m-mon'].forEach(x=>document.getElementById(x).value='');
   }
   if(id==='modal-conc'){
     ['c-part','c-conc','c-cant','c-pre','c-not'].forEach(x=>document.getElementById(x).value='');
@@ -1830,7 +2210,7 @@ Object.assign(window,{
   doLogin,doLogout,showAdminTab,nuevoProyecto,editarProyecto,guardarProyecto,eliminarProyecto,
   nuevoUsuario,editarUsuario,guardarUsuario,toggleUsuario,abrirProyectoAdmin,abrirProyecto,
   volverSelector,showPage,openModal,closeModal,
-  guardarConc,elimConc,guardarMov,elimMov,
+  guardarConc,elimConc,guardarMov,elimMov,onMovCat,onRecCat,onCorteCat,onCorteConc,onSemCat,onSemConc,
   openModalCorte,updCorteInfo,updCortePrev,cerrarCorte,guardarCorte,elimC,
   openAddFoto,cerrarAddFoto,guardarAddFotos,delFC,togC,
   openLB,closeLB,lbNav,lbOut,
@@ -1841,7 +2221,7 @@ Object.assign(window,{
   openModalEval,guardarEval,updEvalBarra,elimSemana,
   openModalBitacora,guardarBitacora,elimBitacora,renderBitacora,
   renderNomina,updNomDestajo,
-  importarXLSX,renderGlobalDashboard,loadAdminProyectos,loadAdminUsuarios,loadAdminActividad
+  importarXLSX,renderGlobalDashboard,updSemResponsable,loadAdminProyectos,loadAdminUsuarios,loadAdminActividad
 });
 </script>
 <style>
@@ -2222,9 +2602,13 @@ tbody tr:hover td{background:var(--sur2);}
             <select id="fil-tipo" onchange="renderGastos()" style="font-size:12px;padding:4px 8px;border:0.5px solid var(--bo2);border-radius:6px;background:var(--sur);font-family:var(--ff)">
               <option value="">Todos</option><option value="ingreso">Ingresos</option><option value="gasto">Gastos</option>
             </select>
-            <select id="fil-part" onchange="renderGastos()" style="font-size:12px;padding:4px 8px;border:0.5px solid var(--bo2);border-radius:6px;background:var(--sur);font-family:var(--ff)">
-              <option value="">Todas las partidas</option>
+            <select id="fil-cat" onchange="onFilCat()" style="font-size:12px;padding:4px 8px;border:0.5px solid var(--bo2);border-radius:6px;background:var(--sur);font-family:var(--ff)">
+              <option value="">Todas las categorías</option>
             </select>
+            <select id="fil-conc" onchange="renderGastos()" style="font-size:12px;padding:4px 8px;border:0.5px solid var(--bo2);border-radius:6px;background:var(--sur);font-family:var(--ff)">
+              <option value="">Todos los conceptos</option>
+            </select>
+            <button class="btn btn-sm" onclick="limpiarFiltrosGastos()" style="font-size:11px">✕</button>
           </div>
         </div>
         <div class="tw"><table><thead><tr><th>Fecha</th><th>Partida</th><th>Concepto</th><th>Proveedor</th><th>Ref.</th><th>Tipo</th><th>Monto</th><th></th></tr></thead><tbody id="mov-tbl"></tbody></table></div>
@@ -2355,9 +2739,9 @@ tbody tr:hover td{background:var(--sur2);}
     <div class="fgrid">
       <div class="fg"><label>Tipo *</label><select id="m-tipo"><option value="gasto">💸 Gasto</option><option value="ingreso">💵 Ingreso</option></select></div>
       <div class="fg"><label>Fecha *</label><input id="m-fec" type="date"></div>
-      <div class="fg"><label>Partida *</label><select id="m-part"></select></div>
-      <div class="fg"><label>Monto ($) *</label><input id="m-mon" type="number" min="0" step="any" placeholder="0.00"></div>
-      <div class="fg fc2"><label>Concepto *</label><input id="m-con" type="text" placeholder="Descripción"></div>
+      <div class="fg"><label>Categoría *</label><select id="m-cat" onchange="onMovCat()"><option value="">-- Categoría --</option></select></div>
+      <div class="fg"><label>Concepto *</label><select id="m-conc-sel"><option value="">-- Selecciona categoría primero --</option></select></div>
+      <div class="fg fc2"><label>Monto ($) *</label><input id="m-mon" type="number" min="0" step="any" placeholder="0.00"></div>
       <div class="fg"><label>Proveedor</label><input id="m-pro" type="text"></div>
       <div class="fg"><label>Referencia / Factura</label><input id="m-ref" type="text"></div>
       <div class="fg fc2"><label>Observaciones</label><textarea id="m-obs"></textarea></div>
@@ -2370,7 +2754,8 @@ tbody tr:hover td{background:var(--sur2);}
 <div class="modal-bg" id="modal-recurso">
   <div class="modal" style="max-width:600px"><div class="mh"><div class="mt" id="rec-modal-titulo">Agregar recurso</div><button class="mc" onclick="closeModal('modal-recurso')">✕</button></div>
     <div class="fgrid">
-      <div class="fg fc2"><label>Partida *</label><select id="rec-part"></select></div>
+      <div class="fg"><label>Categoría *</label><select id="rec-cat" onchange="onRecCat()"><option value="">-- Categoría --</option></select></div>
+      <div class="fg"><label>Concepto *</label><select id="rec-conc-sel"><option value="">-- Selecciona categoría primero --</option></select></div>
       <div class="fg fc2"><label>Tipo *</label>
         <div style="display:flex;gap:0;border:0.5px solid var(--bo2);border-radius:8px;overflow:hidden">
           <button class="ftab active" id="rtab-material" onclick="setRecTipo('material')">🧱 Material</button>
@@ -2442,7 +2827,7 @@ tbody tr:hover td{background:var(--sur2);}
     <div class="fgrid">
       <div class="fg"><label>Días laborales</label><input id="sem-dias" type="number" min="0" max="7" value="5"></div>
       <div class="fg"><label>Promedio trabajadores/día</label><input id="sem-personal" type="number" min="0"></div>
-      <div class="fg"><label>Responsable</label><input id="sem-responsable" type="text"></div>
+      <div class="fg"><label>Responsable de semana</label><div id="sem-resp-wrap"></div></div>
       <div class="fg fc2"><label>Condiciones generales</label><textarea id="sem-condiciones" placeholder="Clima, incidencias, permisos..."></textarea></div>
     </div>
     <div class="brow"><button class="btn btn-p" onclick="guardarSemana()">Guardar semana</button><button class="btn" onclick="closeModal('modal-semana')">Cancelar</button></div>
@@ -2471,9 +2856,22 @@ tbody tr:hover td{background:var(--sur2);}
 <div class="modal-bg" id="modal-corte">
   <div class="modal" style="max-width:620px"><div class="mh"><div class="mt">Nuevo corte de avance</div><button class="mc" onclick="cerrarCorte()">✕</button></div>
     <div class="fgrid">
-      <div class="fg fc2"><label>Partida *</label><select id="cor-part" onchange="updCorteInfo()"></select></div>
-      <div class="fg" style="grid-column:1/-1"><div id="cor-info" style="background:var(--sur2);border-radius:8px;padding:9px 12px;font-size:13px;display:none">Acumulado actual: <strong id="cor-acum" style="color:var(--ac)">0%</strong> &nbsp;·&nbsp; Cortes previos: <strong id="cor-nump">0</strong></div></div>
-      <div class="fg"><label>% avance de ESTE corte *</label><input id="cor-pct" type="number" min="0" max="100" oninput="updCortePrev()"><span style="font-size:11px;color:var(--tx3);margin-top:3px" id="cor-hint"></span></div>
+      <div class="fg"><label>Categoría *</label><select id="cor-cat" onchange="onCorteCat()"><option value="">-- Categoría --</option></select></div>
+      <div class="fg"><label>Concepto *</label><select id="cor-conc-sel" onchange="onCorteConc()"><option value="">-- Selecciona categoría primero --</option></select></div>
+      <div class="fg fc2" style="grid-column:1/-1"><div id="cor-info" style="background:var(--sur2);border-radius:8px;padding:9px 12px;font-size:13px;display:none">
+        Acumulado: <strong id="cor-acum" style="color:var(--ac)">0%</strong> &nbsp;·&nbsp; Cortes previos: <strong id="cor-nump">0</strong>
+        <span id="cor-hint" style="color:var(--tx3);margin-left:8px;font-size:12px"></span>
+      </div></div>
+      <!-- Modo cantidad contable -->
+      <div class="fg fc2" id="cor-cant-wrap" style="display:none">
+        <label id="cor-cant-label">Cantidad ejecutada este corte</label>
+        <input id="cor-cant-corte" type="number" min="0" step="any" placeholder="0" oninput="updCortePrev()">
+      </div>
+      <!-- Modo porcentaje (lote) -->
+      <div class="fg" id="cor-pct-wrap">
+        <label>% avance de ESTE corte *</label>
+        <input id="cor-pct" type="number" min="0" max="100" oninput="updCortePrev()">
+      </div>
       <div class="fg"><label>Acumulado resultante</label><div id="cor-prev" style="padding:8px;background:var(--acl);border-radius:7px;font-size:15px;font-weight:700;color:var(--ac);text-align:center">0%</div></div>
       <div class="fg"><label>Fecha *</label><input id="cor-fec" type="date"></div>
       <div class="fg"><label>Nombre / Etiqueta</label><input id="cor-nom" type="text"></div>
