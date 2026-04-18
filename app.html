@@ -188,7 +188,7 @@ async function loadAdminDashboard(){
   setLoading('Cargando panel...');
   showScreen('screen-admin');
   document.getElementById('admin-user-name').textContent = currentProfile.nombre || currentUser.email;
-  await Promise.all([loadAdminProyectos(), loadAdminUsuarios(), loadAdminActividad()]);
+  await Promise.all([loadAdminProyectos(), loadAdminUsuarios(), loadAdminActividad(), loadAdminPerfiles()]);
   setLoading('');
   showAdminTab('proyectos');
 }
@@ -260,7 +260,10 @@ function renderAdminUsuarios(usuarios){
     ${usuarios.map(u=>`<tr>
       <td style="font-weight:600">${u.nombre||'—'}</td>
       <td style="font-size:12px;color:var(--tx2)">${u.email||'—'}</td>
-      <td><span class="badge ${rolBadge(u.rol)}">${rolLabel(u.rol)}</span></td>
+      <td>
+        <span class="badge ${rolBadge(u.rol)}">${rolLabel(u.rol)}</span>
+        ${u.perfilId?(()=>{const p=(window._adminPerfiles||[]).find(x=>x.id===u.perfilId);return p?`<br><span class="badge bc" style="font-size:10px;margin-top:3px">🎭 ${p.nombre}</span>`:''})():''}
+      </td>
       <td style="font-size:12px;color:var(--tx2)">${(u.proyectos||[]).length} proyecto${(u.proyectos||[]).length!==1?'s':''}</td>
       <td><span class="badge ${u.activo!==false?'bg':'br'}">${u.activo!==false?'Activo':'Inactivo'}</span></td>
       <td style="font-size:11px;color:var(--tx3)">${fmtDT(u.ultimoAcceso)}</td>
@@ -294,11 +297,12 @@ function renderAdminActividad(acts){
 }
 
 function showAdminTab(tab){
-  ['proyectos','usuarios','actividad','global'].forEach(t=>{
+  ['proyectos','usuarios','perfiles','actividad','global'].forEach(t=>{
     document.getElementById('admintab-'+t).classList.toggle('active',t===tab);
     document.getElementById('adminpanel-'+t).style.display = t===tab?'block':'none';
   });
   if(tab==='global') renderGlobalDashboard();
+  if(tab==='perfiles') renderPerfiles();
 }
 
 // ============================================================
@@ -468,12 +472,23 @@ async function eliminarProyecto(id){
 // ============================================================
 // USUARIOS — CRUD (Admin)
 // ============================================================
+function updUsrPerfilSel(){
+  const sel = document.getElementById('usr-perfil-sel');
+  if(!sel) return;
+  const perfiles = window._adminPerfiles||[];
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— Usar permisos del rol —</option>' +
+    perfiles.map(p=>`<option value="${p.id}" ${p.id===prev?'selected':''}>${p.nombre}</option>`).join('');
+}
+
 function nuevoUsuario(){
   document.getElementById('usr-modal-titulo').textContent='Nuevo usuario';
   document.getElementById('usr-edit-id').value='';
   ['usr-nombre','usr-email','usr-pass'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('usr-rol').value='residente';
   document.getElementById('usr-pass-wrap').style.display='block';
+  updUsrPerfilSel();
+  document.getElementById('usr-perfil-sel').value='';
   openModal('modal-usuario');
 }
 
@@ -487,6 +502,8 @@ function editarUsuario(id){
   document.getElementById('usr-pass').value='';
   document.getElementById('usr-rol').value=u.rol||'residente';
   document.getElementById('usr-pass-wrap').style.display='block';
+  updUsrPerfilSel();
+  document.getElementById('usr-perfil-sel').value=u.perfilId||'';
   openModal('modal-usuario');
 }
 
@@ -508,8 +525,10 @@ async function guardarUsuario(){
       const prevUser = auth.currentUser;
       const cred = await createUserWithEmailAndPassword(auth, email, pass);
       const newUid = cred.user.uid;
+      const perfilIdN = document.getElementById('usr-perfil-sel')?.value||'';
       await setDoc(doc(db,'usuarios',newUid),{
         nombre, email, rol,
+        perfilId: perfilIdN||null,
         proyectos: [],
         activo: true,
         creadoEn: serverTimestamp(),
@@ -523,7 +542,8 @@ async function guardarUsuario(){
       // Force re-login notice
       document.getElementById('relogin-notice').style.display='block';
     } else {
-      const updateData = { nombre, rol, actualizadoEn: serverTimestamp() };
+      const perfilId = document.getElementById('usr-perfil-sel')?.value||'';
+      const updateData = { nombre, rol, perfilId: perfilId||null, actualizadoEn: serverTimestamp() };
       await updateDoc(doc(db,'usuarios',editId), updateData);
       if(pass && pass.length>=6){
         showToast('Nota: para cambiar contraseña usa "Resetear contraseña"','err');
@@ -619,7 +639,10 @@ async function abrirProyecto(proyectoObj){
 
   if(currentProfile.rol==='inversionista'){
     showScreen('screen-proyecto');
-    showPage('reporte');
+    showPage('reporte'); // inversionista sigue viendo reporte
+  } else if(currentProfile.rol==='residente'){
+    showScreen('screen-proyecto');
+    showPage('programa');
   } else {
     showScreen('screen-proyecto');
     showPage('dashboard');
@@ -774,14 +797,41 @@ function updHdr(){
   const avG=getAvG();
   document.getElementById('hdr-av-bar').style.width=avG+'%';
   document.getElementById('hdr-av-txt').textContent=avG+'% avance';
-  // Show/hide nav items by role
-  const rol = currentProfile?.rol;
-  document.querySelectorAll('.nt-residente').forEach(el=>el.style.display=esResidente()?'':'none');
-  document.querySelectorAll('.nt-gerencia').forEach(el=>el.style.display=esGerencia()?'':'none');
-  document.querySelectorAll('.nt-admin').forEach(el=>el.style.display=esAdmin()?'':'none');
-  // Gastos y Nomina: ocultar a residentes
-  document.querySelectorAll('.nt-gastos').forEach(el=>el.style.display=puedeGastos()?'':'none');
-  document.querySelectorAll('.nt-nomina').forEach(el=>el.style.display=puedeNomina()?'':'none');
+  // Calcular permisos efectivos (perfil personalizado o rol base)
+  const permEf = window._adminPerfiles ? getPermisosEfectivos(currentProfile) : null;
+  const perms = permEf?.permisos || {};
+  const tienePerfilCustom = permEf?.tipo === 'perfil';
+
+  if(tienePerfilCustom){
+    // Aplicar visibilidad por permisos del perfil personalizado
+    const navMap = {
+      dashboard:'nt-gerencia', catalogo:'nt-gerencia', gastos:'nt-gastos',
+      recursos:'nt-gerencia', personal:'nt-gerencia', nomina:'nt-nomina',
+      programa:'nt-residente', avance:'nt-residente', bitacora:'nt-residente', reporte:'nt-gerencia'
+    };
+    document.querySelectorAll('.nt[data-page]').forEach(el=>{
+      const pag = el.dataset.page;
+      const nivel = perms[pag]||'ninguno';
+      el.style.display = nivel!=='ninguno' ? '' : 'none';
+    });
+  } else {
+    // Roles base normales
+    document.querySelectorAll('.nt-residente').forEach(el=>el.style.display=esResidente()?'':'none');
+    document.querySelectorAll('.nt-gerencia').forEach(el=>el.style.display=esGerencia()?'':'none');
+    document.querySelectorAll('.nt-admin').forEach(el=>el.style.display=esAdmin()?'':'none');
+    document.querySelectorAll('.nt-gastos').forEach(el=>el.style.display=puedeGastos()?'':'none');
+    document.querySelectorAll('.nt-nomina').forEach(el=>el.style.display=puedeNomina()?'':'none');
+  }
+  // Si residente, primera pestaña visible sea Programa
+  if(soloResidente() && !tienePerfilCustom){
+    const activa=document.querySelector('.nt.active');
+    const esVisible=activa&&activa.style.display!=='none';
+    if(!esVisible){
+      document.querySelectorAll('.nt').forEach(t=>t.classList.remove('active'));
+      const prog=document.querySelector('.nt[data-page="programa"]');
+      if(prog) prog.classList.add('active');
+    }
+  }
 }
 
 // ============================================================
@@ -1054,7 +1104,7 @@ const SCOL=['#b87333','#2e6b47','#1a4d8b','#8a6010','#b52e2e','#6b2e8b','#2e6b8b
 
 function renderAv(){
   const avAddBtn = document.getElementById('av-add-btn');
-  if(avAddBtn) avAddBtn.innerHTML = esGerencia() ? `<button class="btn btn-p" onclick="openModalCorte()">+ Nuevo corte</button>` : '';
+  if(avAddBtn) avAddBtn.innerHTML = esResidente() ? `<button class="btn btn-p" onclick="openModalCorte()">+ Nuevo corte</button>` : '';
   const concs=proyectoData.conceptos||[];
   if(!concs.length){document.getElementById('avance-lista').innerHTML='<div class="empty"><div class="ei">📐</div><p>Sin conceptos en el catálogo</p></div>';return;}
   // Agrupar por partida > categoría > concepto
@@ -1099,7 +1149,7 @@ function renderAv(){
         <div style="margin-bottom:11px"><div class="pb"><div class="pf pfc" style="width:${ct.pctAcum}%"></div></div></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <span style="font-size:12px;font-weight:600">📷 Fotos (${fc})</span>
-          ${esGerencia()?`<button class="btn btn-sm" onclick="openAddFoto('${ct.id}')">+ Fotos</button>`:''}
+          ${esResidente()?`<button class="btn btn-sm" onclick="openAddFoto('${ct.id}')">+ Fotos</button>`:''}
         </div>
         <div class="fg-grid">${fg}${fc===0?'<div style="grid-column:1/-1;text-align:center;padding:14px;color:var(--tx3);font-size:12px;border:1px dashed var(--bo2);border-radius:7px">Sin evidencia fotográfica</div>':''}</div>
       </div></div>`;
@@ -1133,10 +1183,10 @@ function renderAv(){
     return`<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
         <div style="font-size:15px;font-weight:700">${part}</div>
-        <div style="display:flex;gap:8px;align-items:center">
+        ${!soloResidente()?`<div style="display:flex;gap:8px;align-items:center">
           <div style="font-size:11px;color:var(--tx3)">Gasto: ${fmt(g)} / ${fmt(pr)} (${pG}%)</div>
           <div style="min-width:80px"><div class="pb"><div class="pf ${cpct(pG)}" style="width:${Math.min(pG,100)}%"></div></div></div>
-        </div>
+        </div>`:''}
       </div>
       ${catBlocks}
     </div>`;
@@ -1210,7 +1260,7 @@ function onCorteConc(){
 let _corConcId='';
 
 function openModalCorte(){
-  if(!esGerencia()){showToast('Sin permisos para registrar cortes','err');return;}
+  if(!esResidente()){showToast('Sin permisos para registrar cortes','err');return;}
   const cats=getCats();if(!cats.length){showToast('Primero agrega conceptos al catálogo','err');return;}
   _corConcId='';
   document.getElementById('cor-cat').innerHTML='<option value="">-- Categoría --</option>'+optsCat();
@@ -1925,7 +1975,9 @@ function renderPrograma(){
 // ============================================================
 let _bitEditId=null;
 function openModalBitacora(editId){
-  if(!esGerencia()){showToast('Sin permisos para editar la bitácora','err');return;}
+  if(!esResidente()){showToast('Sin permisos para acceder a la bitácora','err');return;}
+  // Residente solo puede crear, no editar entradas existentes
+  if(editId && soloResidente()){showToast('Sin permisos para editar entradas','err');return;}
   _bitEditId=editId||null;
   const ps=getPs();
   document.getElementById('bit-partida').innerHTML='<option value="">— Sin partida —</option>'+ps.map(p=>`<option value="${p}">${p}</option>`).join('');
@@ -1969,8 +2021,8 @@ function renderBitacora(){
   if(tipo)lista=lista.filter(b=>b.tipo===tipo);
   if(mes)lista=lista.filter(b=>b.fecha.startsWith(mes));
   const bitAddBtn = document.getElementById('bit-add-btn');
-  if(bitAddBtn) bitAddBtn.innerHTML = esGerencia() ? `<button class="btn btn-p" onclick="openModalBitacora()">+ Nueva entrada</button>` : '';
-  if(!lista.length){document.getElementById('bit-lista').innerHTML=`<div class="empty"><div class="ei">📓</div><p>${(proyectoData.bitacora||[]).length?'Sin resultados':'Bitácora vacía'}</p>${esGerencia()?`<button class="btn btn-sm btn-p" style="margin-top:10px" onclick="openModalBitacora()">+ Primera entrada</button>`:''}</div>`;return;}
+  if(bitAddBtn) bitAddBtn.innerHTML = esResidente() ? `<button class="btn btn-p" onclick="openModalBitacora()">+ Nueva entrada</button>` : '';
+  if(!lista.length){document.getElementById('bit-lista').innerHTML=`<div class="empty"><div class="ei">📓</div><p>${(proyectoData.bitacora||[]).length?'Sin resultados':'Bitácora vacía'}</p>${esResidente()?`<button class="btn btn-sm btn-p" style="margin-top:10px" onclick="openModalBitacora()">+ Primera entrada</button>`:''}</div>`;return;}
   const meses={};lista.forEach(b=>{const m=b.fecha.substring(0,7);if(!meses[m])meses[m]=[];meses[m].push(b);});
   document.getElementById('bit-lista').innerHTML=Object.entries(meses).map(([mes,items])=>{
     const [y,m]=mes.split('-');
@@ -2242,8 +2294,191 @@ document.querySelectorAll('.modal-bg').forEach(el=>{
 });
 
 // Expose functions to global scope for HTML onclick handlers
+
+// ============================================================
+// PERFILES PERSONALIZADOS
+// ============================================================
+// Estructura de un perfil:
+// { id, nombre, descripcion, permisos: { modulo: 'ninguno'|'ver'|'capturar'|'editar' } }
+
+window._adminPerfiles = [];
+let _perfilEditId = null;
+
+// Módulos disponibles y sus niveles
+const MODULOS_DEF = [['dashboard','📊 Dashboard'],['catalogo','📋 Catálogo'],['gastos','💰 Gastos'],['recursos','🧱 Recursos'],['personal','👷 Personal'],['nomina','💵 Nómina'],['programa','📅 Programa'],['avance','📐 Avance'],['bitacora','📓 Bitácora'],['reporte','📄 Reporte']];
+const NIVELES = ['ninguno','ver','capturar','editar'];
+const NIVEL_LABEL = {ninguno:'❌ Sin acceso', ver:'👁 Solo ver', capturar:'➕ Capturar', editar:'✏️ Editar completo'};
+const NIVEL_COLOR = {ninguno:'var(--tx3)', ver:'var(--bl)', capturar:'var(--am)', editar:'var(--gn)'};
+
+async function loadAdminPerfiles(){
+  try {
+    const snap = await getDocs(collection(db,'perfiles'));
+    const perfiles = [];
+    snap.forEach(d => perfiles.push({id:d.id,...d.data()}));
+    window._adminPerfiles = perfiles;
+  } catch(e){ console.warn('Perfiles:', e); }
+}
+
+function renderPerfiles(){
+  const perfiles = window._adminPerfiles || [];
+  const el = document.getElementById('adminpanel-perfiles');
+  const lista = document.getElementById('admin-perfiles-lista');
+  if(!lista) return;
+  if(!perfiles.length){
+    lista.innerHTML=`<div class="empty"><div class="ei">🎭</div><p>Sin perfiles personalizados</p><p style="font-size:12px;color:var(--tx3);margin-top:6px">Crea perfiles con accesos específicos por módulo</p></div>`;
+    return;
+  }
+  lista.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px">
+  ${perfiles.map(p=>{
+    const perms = p.permisos || {};
+    const modsActivos = MODULOS_DEF.filter(([k])=>perms[k]&&perms[k]!=='ninguno');
+    return`<div class="card" style="border-left:3px solid var(--ac)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+        <div>
+          <div style="font-size:15px;font-weight:700">${p.nombre}</div>
+          ${p.descripcion?`<div style="font-size:12px;color:var(--tx3);margin-top:2px">${p.descripcion}</div>`:''}
+        </div>
+        <div style="display:flex;gap:5px">
+          <button class="btn btn-sm" onclick="editarPerfil('${p.id}')">✏️</button>
+          <button class="btn btn-sm btn-d" onclick="eliminarPerfil('${p.id}')">✕</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px">
+        ${modsActivos.map(([k,label])=>`
+          <div style="background:var(--sur2);border:0.5px solid var(--bo);border-radius:6px;padding:3px 9px;font-size:11px">
+            <span>${label}</span>
+            <span style="color:${NIVEL_COLOR[perms[k]]};font-weight:600;margin-left:4px">${NIVEL_LABEL[perms[k]]}</span>
+          </div>`).join('')}
+        ${!modsActivos.length?'<span style="font-size:12px;color:var(--tx3)">Sin módulos activos</span>':''}
+      </div>
+      <div style="margin-top:12px;border-top:0.5px solid var(--bo);padding-top:10px;font-size:11px;color:var(--tx3)">
+        Asignado a ${(window._adminUsuarios||[]).filter(u=>u.perfilId===p.id).length} usuario(s)
+      </div>
+    </div>`;
+  }).join('')}
+  </div>`;
+}
+
+function nuevoPerfil(){
+  _perfilEditId = null;
+  document.getElementById('perf-modal-titulo').textContent = 'Nuevo perfil';
+  document.getElementById('perf-nombre').value = '';
+  document.getElementById('perf-desc').value = '';
+  renderPerfilModulos({});
+  openModal('modal-perfil');
+}
+
+function editarPerfil(id){
+  const p = (window._adminPerfiles||[]).find(x=>x.id===id);
+  if(!p) return;
+  _perfilEditId = id;
+  document.getElementById('perf-modal-titulo').textContent = 'Editar perfil: '+p.nombre;
+  document.getElementById('perf-nombre').value = p.nombre||'';
+  document.getElementById('perf-desc').value = p.descripcion||'';
+  renderPerfilModulos(p.permisos||{});
+  openModal('modal-perfil');
+}
+
+function renderPerfilModulos(perms){
+  document.getElementById('perf-modulos').innerHTML = MODULOS_DEF.map(([key,label])=>{
+    const val = perms[key]||'ninguno';
+    return`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--sur2);border-radius:8px;gap:10px">
+      <div style="font-size:13px;font-weight:500;flex:1">${label}</div>
+      <div style="display:flex;gap:4px">
+        ${NIVELES.map(n=>`
+          <button onclick="setPerm('${key}','${n}',this)"
+            style="padding:4px 9px;border-radius:5px;font-size:11px;cursor:pointer;border:1px solid;
+              ${val===n?`background:${NIVEL_COLOR[n]};color:#fff;border-color:${NIVEL_COLOR[n]};font-weight:600`:'background:var(--sur);color:var(--tx3);border-color:var(--bo2)'}"
+            data-mod="${key}" data-nivel="${n}">
+            ${NIVEL_LABEL[n].split(' ')[0]} ${n==='ninguno'?'':NIVEL_LABEL[n].split(' ').slice(1).join(' ')}
+          </button>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function setPerm(modulo, nivel, btn){
+  // Actualizar visual
+  document.querySelectorAll(`[data-mod="${modulo}"]`).forEach(b=>{
+    const isActive = b.dataset.nivel === nivel;
+    const col = NIVEL_COLOR[b.dataset.nivel];
+    b.style.background = isActive ? col : 'var(--sur)';
+    b.style.color = isActive ? '#fff' : 'var(--tx3)';
+    b.style.borderColor = isActive ? col : 'var(--bo2)';
+    b.style.fontWeight = isActive ? '600' : '400';
+  });
+}
+
+async function guardarPerfil(){
+  const nombre = document.getElementById('perf-nombre').value.trim();
+  if(!nombre){ showToast('El nombre es requerido','err'); return; }
+
+  // Recoger permisos de los botones activos
+  const permisos = {};
+  MODULOS_DEF.forEach(([key])=>{
+    const btns = document.querySelectorAll(`[data-mod="${key}"]`);
+    let activo = 'ninguno';
+    btns.forEach(b=>{
+      if(b.style.fontWeight==='600' || b.style.fontWeight===600) activo=b.dataset.nivel;
+    });
+    permisos[key] = activo;
+  });
+
+  const data = {
+    nombre,
+    descripcion: document.getElementById('perf-desc').value.trim(),
+    permisos,
+    actualizadoEn: serverTimestamp()
+  };
+
+  try {
+    if(_perfilEditId){
+      await updateDoc(doc(db,'perfiles',_perfilEditId), data);
+      showToast('Perfil actualizado');
+    } else {
+      data.creadoEn = serverTimestamp();
+      data.creadoPor = currentUser.uid;
+      await addDoc(collection(db,'perfiles'), data);
+      showToast('Perfil creado');
+    }
+    closeModal('modal-perfil');
+    await loadAdminPerfiles();
+    renderPerfiles();
+    await logActividad(_perfilEditId?'editar':'crear',(_perfilEditId?'Editó':'Creó')+' perfil: '+nombre, null);
+  } catch(e){ showToast('Error: '+e.message,'err'); }
+}
+
+async function eliminarPerfil(id){
+  const p = (window._adminPerfiles||[]).find(x=>x.id===id);
+  if(!confirm(`¿Eliminar el perfil "${p?.nombre}"?`)) return;
+  try {
+    await deleteDoc(doc(db,'perfiles',id));
+    showToast('Perfil eliminado');
+    await loadAdminPerfiles();
+    renderPerfiles();
+  } catch(e){ showToast('Error: '+e.message,'err'); }
+}
+
+// Obtener permisos efectivos de un usuario (perfil personalizado > rol base)
+function getPermisosEfectivos(profile){
+  if(profile.perfilId){
+    const perfil = (window._adminPerfiles||[]).find(p=>p.id===profile.perfilId);
+    if(perfil) return {tipo:'perfil', nombre:perfil.nombre, permisos:perfil.permisos||{}};
+  }
+  // Roles base
+  const rol = profile.rol;
+  const base = {
+    admin:       {dashboard:'editar',catalogo:'editar',gastos:'editar',recursos:'editar',personal:'editar',nomina:'editar',programa:'editar',avance:'editar',bitacora:'editar',reporte:'editar'},
+    gerencia:    {dashboard:'editar',catalogo:'editar',gastos:'editar',recursos:'editar',personal:'editar',nomina:'editar',programa:'editar',avance:'editar',bitacora:'editar',reporte:'editar'},
+    residente:   {dashboard:'ninguno',catalogo:'ninguno',gastos:'ninguno',recursos:'ninguno',personal:'ninguno',nomina:'ninguno',programa:'ver',avance:'capturar',bitacora:'capturar',reporte:'ninguno'},
+    inversionista:{dashboard:'ninguno',catalogo:'ninguno',gastos:'ninguno',recursos:'ninguno',personal:'ninguno',nomina:'ninguno',programa:'ninguno',avance:'ninguno',bitacora:'ninguno',reporte:'ver'},
+  };
+  return {tipo:'rol', nombre:rol, permisos:base[rol]||base.residente};
+}
+
 Object.assign(window,{
   doLogin,doLogout,showAdminTab,nuevoProyecto,editarProyecto,guardarProyecto,eliminarProyecto,
+  nuevoPerfil,editarPerfil,guardarPerfil,eliminarPerfil,setPerm,renderPerfiles,updUsrPerfilSel,
   nuevoUsuario,editarUsuario,guardarUsuario,toggleUsuario,abrirProyectoAdmin,abrirProyecto,
   volverSelector,showPage,openModal,closeModal,
   guardarConc,elimConc,guardarMov,elimMov,onMovCat,onRecCat,onCorteCat,onCorteConc,onSemCat,onSemConc,
@@ -2492,6 +2727,7 @@ tbody tr:hover td{background:var(--sur2);}
     <div class="admin-tabs">
       <div class="admintab active" id="admintab-proyectos" onclick="showAdminTab('proyectos')">🏗 Proyectos</div>
       <div class="admintab" id="admintab-usuarios" onclick="showAdminTab('usuarios')">👥 Usuarios</div>
+      <div class="admintab" id="admintab-perfiles" onclick="showAdminTab('perfiles')">🎭 Perfiles</div>
       <div class="admintab" id="admintab-actividad" onclick="showAdminTab('actividad')">📋 Actividad</div>
       <div class="admintab" id="admintab-global" onclick="showAdminTab('global')">🌐 Dashboard Global</div>
     </div>
@@ -2514,6 +2750,18 @@ tbody tr:hover td{background:var(--sur2);}
         </div>
         <div id="relogin-notice">⚠ Se creó un nuevo usuario. El sistema requiere que vuelvas a iniciar sesión para restaurar la sesión de administrador. <button class="btn btn-sm" onclick="doLogout()" style="margin-left:10px">Cerrar sesión</button></div>
         <div id="admin-usuarios-lista"></div>
+      </div>
+
+      <!-- PERFILES PERSONALIZADOS -->
+      <div id="adminpanel-perfiles" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+          <div>
+            <div style="font-size:18px;font-weight:700">Perfiles de acceso</div>
+            <div style="font-size:12px;color:var(--tx3)">Define permisos personalizados por módulo para asignar a usuarios</div>
+          </div>
+          <button class="btn btn-p" onclick="nuevoPerfil()">+ Nuevo perfil</button>
+        </div>
+        <div id="admin-perfiles-lista"></div>
       </div>
 
       <!-- ACTIVIDAD -->
@@ -2571,16 +2819,16 @@ tbody tr:hover td{background:var(--sur2);}
   </div>
 
   <nav class="nav">
-    <div class="nt active" data-page="dashboard" onclick="showPage('dashboard')">📊 Dashboard</div>
-    <div class="nt nt-residente" data-page="catalogo" onclick="showPage('catalogo')">📋 Catálogo</div>
+    <div class="nt nt-gerencia active" data-page="dashboard" onclick="showPage('dashboard')">📊 Dashboard</div>
+    <div class="nt nt-gerencia" data-page="catalogo" onclick="showPage('catalogo')">📋 Catálogo</div>
     <div class="nt nt-gastos" data-page="gastos" onclick="showPage('gastos')">💰 Gastos</div>
-    <div class="nt nt-residente" data-page="recursos" onclick="showPage('recursos')">🧱 Recursos</div>
-    <div class="nt nt-residente" data-page="personal" onclick="showPage('personal')">👷 Personal</div>
+    <div class="nt nt-gerencia" data-page="recursos" onclick="showPage('recursos')">🧱 Recursos</div>
+    <div class="nt nt-gerencia" data-page="personal" onclick="showPage('personal')">👷 Personal</div>
     <div class="nt nt-nomina" data-page="nomina" onclick="showPage('nomina')">💵 Nómina</div>
     <div class="nt nt-residente" data-page="programa" onclick="showPage('programa')">📅 Programa</div>
     <div class="nt nt-residente" data-page="avance" onclick="showPage('avance')">📐 Avance</div>
     <div class="nt nt-residente" data-page="bitacora" onclick="showPage('bitacora')">📓 Bitácora</div>
-    <div class="nt" data-page="reporte" onclick="showPage('reporte')">📄 Reporte</div>
+    <div class="nt nt-gerencia" data-page="reporte" onclick="showPage('reporte')">📄 Reporte</div>
   </nav>
 
   <div class="main">
@@ -2983,6 +3231,28 @@ tbody tr:hover td{background:var(--sur2);}
   </div>
 </div>
 
+<!-- Perfil personalizado (admin) -->
+<div class="modal-bg" id="modal-perfil">
+  <div class="modal" style="max-width:720px"><div class="mh">
+    <div class="mt" id="perf-modal-titulo">Nuevo perfil</div>
+    <button class="mc" onclick="closeModal('modal-perfil')">✕</button>
+  </div>
+  <div class="fgrid" style="margin-bottom:16px">
+    <div class="fg fc2"><label>Nombre del perfil *</label><input id="perf-nombre" type="text" placeholder="Ej: Supervisor de campo, Contador..."></div>
+    <div class="fg fc2"><label>Descripción</label><input id="perf-desc" type="text" placeholder="Descripción breve del perfil"></div>
+  </div>
+  <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--tx2)">🔐 Permisos por módulo</div>
+  <div style="background:var(--acl);border:0.5px solid var(--bo);border-radius:8px;padding:9px 12px;font-size:12px;color:var(--tx2);margin-bottom:12px">
+    <strong>Niveles:</strong> ❌ Sin acceso · 👁 Solo ver · ➕ Capturar (crear sin editar/borrar) · ✏️ Editar completo (crear, editar y borrar)
+  </div>
+  <div id="perf-modulos" style="display:flex;flex-direction:column;gap:7px;max-height:420px;overflow-y:auto;padding-right:4px"></div>
+  <div class="brow" style="margin-top:16px">
+    <button class="btn btn-p" onclick="guardarPerfil()">💾 Guardar perfil</button>
+    <button class="btn" onclick="closeModal('modal-perfil')">Cancelar</button>
+  </div>
+  </div>
+</div>
+
 <!-- Usuario (admin) -->
 <div class="modal-bg" id="modal-usuario">
   <div class="modal"><div class="mh"><div class="mt" id="usr-modal-titulo">Nuevo usuario</div><button class="mc" onclick="closeModal('modal-usuario')">✕</button></div>
@@ -2990,12 +3260,17 @@ tbody tr:hover td{background:var(--sur2);}
     <div class="fgrid">
       <div class="fg fc2"><label>Nombre completo *</label><input id="usr-nombre" type="text" placeholder="Nombre del usuario"></div>
       <div class="fg fc2"><label>Correo electrónico *</label><input id="usr-email" type="email" placeholder="correo@empresa.com"></div>
-      <div class="fg fc2"><label>Rol *</label>
-        <select id="usr-rol">
-          <option value="residente">👷 Residente — captura limitada, sin gastos ni nómina</option>
-          <option value="gerencia">🔨 Gerencia — captura y edición completa</option>
-          <option value="inversionista">💼 Inversionista — solo ve reportes</option>
-          <option value="admin">👑 Administrador — acceso total</option>
+      <div class="fg"><label>Rol base *</label>
+        <select id="usr-rol" onchange="updUsrPerfilSel()">
+          <option value="residente">👷 Residente</option>
+          <option value="gerencia">🔨 Gerencia</option>
+          <option value="inversionista">💼 Inversionista</option>
+          <option value="admin">👑 Administrador</option>
+        </select>
+      </div>
+      <div class="fg"><label>Perfil personalizado (opcional)</label>
+        <select id="usr-perfil-sel">
+          <option value="">— Usar permisos del rol —</option>
         </select>
       </div>
       <div class="fg fc2" id="usr-pass-wrap"><label>Contraseña *</label><input id="usr-pass" type="password" placeholder="Mínimo 6 caracteres"></div>
