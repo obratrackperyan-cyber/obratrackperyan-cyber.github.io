@@ -2005,6 +2005,42 @@ function renderRep(){
   document.getElementById('rep-titulo').textContent=nombre;
   document.getElementById('rep-sub').textContent=[currentProyecto?.ubicacion,currentProyecto?.empresa].filter(Boolean).join(' — ');
   document.getElementById('rep-corte').textContent='Corte al: '+new Date().toLocaleDateString('es-MX',{year:'numeric',month:'long',day:'numeric'});
+  // Fechas del proyecto
+  const ini=currentProyecto?.inicio,fin=currentProyecto?.fin;
+  const hoyMs=Date.now();
+  let durInfo='';
+  if(ini&&fin){
+    const iniD=new Date(ini+'T12:00:00'),finD=new Date(fin+'T12:00:00');
+    const totalDias=Math.round((finD-iniD)/(1000*60*60*24));
+    const diasTrans=Math.round((hoyMs-iniD)/(1000*60*60*24));
+    const diasRest=Math.round((finD-hoyMs)/(1000*60*60*24));
+    const pctTiempo=Math.min(100,Math.round(diasTrans/totalDias*100));
+    durInfo=`· ${totalDias} días totales · ${diasRest>0?diasRest+' días restantes':'⚠ Vencido hace '+Math.abs(diasRest)+' días'}`;
+    document.getElementById('rep-fechas').style.display='flex';
+    document.getElementById('rep-fechas').innerHTML=`
+      <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:center;padding:14px 0 8px">
+        <div>
+          <div style="font-size:10px;color:#9a9890;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Inicio de obra</div>
+          <div style="font-size:16px;font-weight:600;color:#f0ece4">📅 ${fmtF(ini)}</div>
+        </div>
+        <div style="color:#555;font-size:18px">→</div>
+        <div>
+          <div style="font-size:10px;color:#9a9890;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Fecha de entrega</div>
+          <div style="font-size:16px;font-weight:600;color:${diasRest<0?'#e87070':diasRest<14?'#d4a04a':'#f0ece4'}">🎯 ${fmtF(fin)}</div>
+        </div>
+        <div style="flex:1;min-width:180px">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#9a9890;margin-bottom:4px">
+            <span>Tiempo transcurrido</span><span>${pctTiempo}%</span>
+          </div>
+          <div style="background:rgba(255,255,255,.1);border-radius:99px;height:6px;overflow:hidden">
+            <div style="height:100%;border-radius:99px;background:${diasRest<0?'#e87070':diasRest<14?'#d4a04a':'#c49a52'};width:${pctTiempo}%"></div>
+          </div>
+          <div style="font-size:11px;color:#9a9890;margin-top:4px">${totalDias} días totales ${durInfo.split('·').slice(1).join('·')}</div>
+        </div>
+      </div>`;
+  } else {
+    document.getElementById('rep-fechas').style.display='none';
+  }
   const pt=getPresT(),gas=getTGas(),ing=getTIng(),bal=ing-gas,avG=getAvG();
   const margen=getMargen(),montoMgn=getMontoMargen(),presBruto=getPresBruto();
   document.getElementById('rep-met').innerHTML=`
@@ -2691,7 +2727,8 @@ tbody tr:hover td{background:var(--sur2);}
       </div>
       <div class="rephdr"><div style="position:relative;z-index:1">
         <h2 id="rep-titulo">Reporte</h2><p id="rep-sub"></p>
-        <p style="margin-top:11px;font-size:13px;color:#c4c0b8" id="rep-corte"></p>
+        <p style="margin-top:6px;font-size:13px;color:#c4c0b8" id="rep-corte"></p>
+        <div id="rep-fechas" style="display:none;border-top:1px solid rgba(255,255,255,.1);margin-top:12px"></div>
       </div></div>
       <div class="metrics" id="rep-met"></div>
       <!-- Sección margen de utilidad — solo inversionista/admin -->
