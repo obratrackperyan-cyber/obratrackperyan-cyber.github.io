@@ -933,7 +933,9 @@ function renderDash(){
 
   const ult=[...(proyectoData.movimientos||[])].sort((a,b)=>b.fecha.localeCompare(a.fecha)).slice(0,8);
   document.getElementById('dash-movs').innerHTML=ult.length?ult.map(m=>`
-    <tr><td>${fmtF(m.fecha)}</td><td>${m.partida}</td><td>${m.concepto}</td>
+    <tr><td>${fmtF(m.fecha)}</td>
+    <td><div style="font-size:12px;font-weight:600">${m.partida||'—'}</div>${m.categoria?`<div style="font-size:10px;color:var(--ac)">📁 ${m.categoria}</div>`:''}</td>
+    <td>${m.concepto}</td>
     <td><span class="badge ${m.tipo==='ingreso'?'bg':'br'}">${m.tipo}</span></td>
     <td style="font-weight:600;color:${m.tipo==='ingreso'?'var(--gn)':'var(--rd)'}">${m.tipo==='ingreso'?'+':'-'}${fmt(m.monto)}</td>
     <td style="color:var(--tx3)">${m.proveedor||'—'}</td></tr>`).join('')
@@ -987,8 +989,20 @@ function renderCat(){
     </div>`;
   document.getElementById('cat-lista').innerHTML=Object.entries(gr).map(([gn,items])=>{
     const subBruto=items.reduce((s,i)=>s+i.cantidad*i.precio,0),subNeto=subBruto*factorNeto();
-    return`<div class="pc"><div class="ph"><span style="font-weight:600;font-size:14px">${gn}</span>
-    <div style="display:flex;gap:10px;align-items:center"><span style="font-size:11px;color:var(--tx3)">${items.length} conc.</span><span style="font-size:14px;font-weight:700;color:var(--ac)">${fmt(subNeto)}</span></div></div>
+    // Obtener categorías únicas de los conceptos de esta partida
+    const cats=[...new Set(items.map(i=>i.categoria||'Sin categoría'))];
+    return`<div class="pc"><div class="ph">
+      <div>
+        <span style="font-weight:700;font-size:15px">${gn}</span>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px">
+          ${cats.map(c=>`<span class="badge bb" style="font-size:10px">📁 ${c}</span>`).join('')}
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-shrink:0">
+        <span style="font-size:11px;color:var(--tx3)">${items.length} conc.</span>
+        <span style="font-size:14px;font-weight:700;color:var(--ac)">${fmt(subNeto)}</span>
+      </div>
+    </div>
     <div class="tw"><table><thead><tr><th>Concepto</th><th>Cat.</th><th>Unidad</th><th>Cant.</th><th>P.U.</th><th>Total</th>${esGerencia()?'<th></th>':''}</tr></thead>
     <tbody>${items.map(i=>`<tr><td>${i.concepto}</td><td><span class="badge bb">${i.categoria}</span></td><td>${i.unidad}</td>
     <td>${fmtN(i.cantidad)}</td><td>${fmt(precioNeto(i.precio))}</td><td style="font-weight:600">${fmt(i.cantidad*precioNeto(i.precio))}</td>
@@ -1445,6 +1459,27 @@ let _recTipo='material',_recEditId=null;
 function setRecTipo(t){_recTipo=t;['material','mano_obra'].forEach(x=>{document.getElementById('rtab-'+x).classList.toggle('active',x===t);});}
 function updRecTotal(){document.getElementById('rec-tot').textContent=fmt((parseFloat(document.getElementById('rec-cant').value)||0)*(parseFloat(document.getElementById('rec-precio').value)||0));}
 
+function openModalRecursoConc(catVal, concId){
+  if(!esGerencia()){showToast('Sin permisos para editar recursos','err');return;}
+  const cats=getCats();if(!cats.length){showToast('Primero agrega conceptos al catálogo','err');return;}
+  _recEditId=null;
+  document.getElementById('rec-modal-titulo').textContent='Agregar recurso';
+  // Poblar categorías y preseleccionar
+  document.getElementById('rec-cat').innerHTML='<option value="">-- Categoría --</option>'+optsCat();
+  document.getElementById('rec-cat').value=catVal||'';
+  // Poblar conceptos de esa categoría y preseleccionar
+  if(catVal){
+    document.getElementById('rec-conc-sel').innerHTML='<option value="">-- Selecciona concepto --</option>'+optsConc(catVal);
+    if(concId) document.getElementById('rec-conc-sel').value=concId;
+  } else {
+    document.getElementById('rec-conc-sel').innerHTML='<option value="">-- Selecciona categoría primero --</option>';
+  }
+  setRecTipo('material');
+  ['rec-desc','rec-notas','rec-cant','rec-precio'].forEach(id=>document.getElementById(id).value='');
+  updRecTotal();
+  openModal('modal-recurso');
+}
+
 function onRecCat(){
   const cat=document.getElementById('rec-cat').value;
   const sel=document.getElementById('rec-conc-sel');
@@ -1563,15 +1598,19 @@ function renderRecursos(){
         const recsConc=(recByConc[c.id]||[]);
         const totConc=recsConc.reduce((s,r)=>s+r.cantidad*r.precio,0);
         const tieneRecursos=recsConc.length>0;
+        const catEnc=encodeURIComponent(cat).replace(/'/g,"\\'");
+        const cIdStr=String(c.id);
         return`<div style="margin-bottom:8px;padding:10px 12px;background:var(--sur2);border-radius:8px;border-left:3px solid ${tieneRecursos?'var(--ac)':'var(--bo2)'}">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${tieneRecursos?'8':'0'}px;flex-wrap:wrap;gap:6px">
-            <div>
+            <div style="flex:1;min-width:0">
               <div style="font-size:10px;color:var(--tx3);font-weight:500;margin-bottom:2px;text-transform:uppercase;letter-spacing:.4px">📦 ${p}</div>
               <div style="font-size:13px;font-weight:700">${c.concepto}</div>
               <div style="font-size:11px;color:var(--tx3);margin-top:1px">${fmtN(c.cantidad)} ${c.unidad}</div>
             </div>
-            ${tieneRecursos?`<span style="font-size:13px;font-weight:700;color:var(--ac)">${fmt(totConc)}</span>`
-              :`${esGerencia()?`<button class="btn btn-sm btn-p" style="font-size:11px" onclick="openModalRecurso()">+ Recurso</button>`:'<span style="font-size:11px;color:var(--tx3)">Sin recursos</span>'}`}
+            <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+              ${tieneRecursos?`<span style="font-size:13px;font-weight:700;color:var(--ac)">${fmt(totConc)}</span>`:''}
+              ${esGerencia()?`<button class="btn btn-sm btn-p" style="font-size:11px" onclick="openModalRecursoConc('${cat}','${cIdStr}')">+ Recurso</button>`:''}
+            </div>
           </div>
           ${tieneRecursos?tablaRecursos(recsConc):''}
         </div>`;
@@ -1723,7 +1762,16 @@ function renderNomina(){
       <thead><tr style="background:var(--sur2)"><th style="padding:9px 10px;text-align:left;font-size:11px;color:var(--tx3)">Trabajador</th><th style="padding:9px 10px;text-align:left;font-size:11px;color:var(--tx3)">Partidas</th><th style="padding:9px 10px;text-align:center;font-size:11px;color:var(--tx3)">Tipo</th><th style="padding:9px 10px;text-align:center;font-size:11px;color:var(--tx3)">Base</th>${filas.some(f=>f.p.tipo==='destajo')?'<th style="padding:9px 10px;text-align:center;font-size:11px;color:var(--tx3)">Cantidad</th>':''}<th style="padding:9px 10px;text-align:right;font-size:11px;color:var(--tx3)">Pago</th></tr></thead>
       <tbody>${filas.map((f,i)=>`<tr style="border-bottom:0.5px solid var(--bo)">
         <td style="padding:10px"><div style="font-weight:600">${f.p.nombre}</div><div style="font-size:11px;color:var(--tx3)">${f.p.especialidad}</div></td>
-        <td style="padding:10px;font-size:12px">${f.susParts.join(', ')||'—'}</td>
+        <td style="padding:10px;font-size:12px">
+          ${f.susParts.length?(()=>{
+            return f.susParts.map(sp=>{
+              const semP=(sem.partidas||[]).find(x=>x.partida===sp);
+              const cat=semP?.categoria||'';
+              const conc=semP?.concepto||'';
+              return `<div style="margin-bottom:3px"><span style="font-weight:600">${sp}</span>${cat?` <span style="color:var(--ac);font-size:10px">📁 ${cat}</span>`:''}${conc?`<br><span style="color:var(--tx3);font-size:11px">${conc}</span>`:''}</div>`;
+            }).join('');
+          })():'—'}
+        </td>
         <td style="padding:10px;text-align:center"><span class="badge ${f.p.tipo==='destajo'?'bb':f.p.tipo==='fijo'?'bg':'ba'}" style="font-size:11px">${f.p.tipo}</span></td>
         <td style="padding:10px;text-align:center;font-size:12px">${f.base}</td>
         ${filas.some(x=>x.p.tipo==='destajo')?`<td style="padding:10px;text-align:center">${f.p.tipo==='destajo'?`<div style="display:flex;align-items:center;gap:4px;justify-content:center"><input type="number" min="0" step="any" placeholder="0" id="nom-cant-${i}" style="width:72px;padding:5px 7px;border:0.5px solid var(--bo2);border-radius:6px;font-size:13px;font-family:var(--ff);text-align:center" oninput="updNomDestajo(${i},'${f.p.destajo_uni}',${f.p.destajo_precio})"><span style="font-size:11px;color:var(--tx3)">${f.p.destajo_uni}</span></div>`:'—'}</td>`:''}
@@ -1857,7 +1905,12 @@ function openModalEval(semId){
     const avActual=getAv(p.partida);const cumplido=(ev.partidas||[])[i]?.pct_real??'';
     return`<div style="background:var(--sur2);border-radius:8px;padding:11px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
-        <div><div style="font-size:13px;font-weight:600">${p.partida}</div><div style="font-size:11px;color:var(--tx3)">${p.desc||''}</div></div>
+        <div>
+          <div style="font-size:13px;font-weight:600">${p.partida}</div>
+          ${p.categoria?`<div style="font-size:10px;color:var(--ac);font-weight:600">📁 ${p.categoria}</div>`:''}
+          ${p.concepto||p.conceptoId?(()=>{const cn=p.concepto||(getConcById(p.conceptoId)?.concepto||'');return cn?`<div style="font-size:12px;color:var(--tx2)">${cn}</div>`:''})():''}
+          <div style="font-size:11px;color:var(--tx3)">${p.desc||''}</div>
+        </div>
         <div style="display:flex;gap:8px"><div style="text-align:center"><div style="font-size:10px;color:var(--tx3)">Prog.</div><div style="font-size:14px;font-weight:700;color:var(--bl)">${p.pct_prog||100}%</div></div>
         <div style="text-align:center"><div style="font-size:10px;color:var(--tx3)">Acum.</div><div style="font-size:14px;font-weight:700;color:var(--ac)">${avActual}%</div></div></div>
       </div>
@@ -2196,7 +2249,9 @@ function renderRep(){
   if(!al)al='<div class="al alg">✓ Sin alertas críticas.</div>';
   document.getElementById('rep-alert').innerHTML=al;
   document.getElementById('rep-movs').innerHTML=[...(proyectoData.movimientos||[])].sort((a,b)=>b.fecha.localeCompare(a.fecha)).map(m=>`
-    <tr><td>${fmtF(m.fecha)}</td><td>${m.partida}</td><td>${m.concepto}</td>
+    <tr><td>${fmtF(m.fecha)}</td>
+    <td><div style="font-size:12px;font-weight:600">${m.partida||'—'}</div>${m.categoria?`<div style="font-size:10px;color:var(--ac)">📁 ${m.categoria}</div>`:''}</td>
+    <td>${m.concepto}</td>
     <td><span class="badge ${m.tipo==='ingreso'?'bg':'br'}">${m.tipo}</span></td>
     <td style="font-weight:600;color:${m.tipo==='ingreso'?'var(--gn)':'var(--rd)'}">${m.tipo==='ingreso'?'+':'-'}${fmt(m.monto)}</td>
     <td style="color:var(--tx3)">${m.proveedor||'—'}</td></tr>`).join('')
@@ -2495,7 +2550,7 @@ Object.assign(window,{
   openAddFoto,cerrarAddFoto,guardarAddFotos,delFC,togC,
   openLB,closeLB,lbNav,lbOut,
   swTab,startCam,stopCam,flipCam,capturar,onGal,renderPend,delPend,
-  openModalRecurso,guardarRecurso,elimRecurso,setRecTipo,updRecTotal,renderRecursos,
+  openModalRecurso,openModalRecursoConc,guardarRecurso,elimRecurso,setRecTipo,updRecTotal,renderRecursos,
   openModalPersonal,guardarPersonal,elimPersonal,toggleActivoPersonal,setPTipo,renderPersonal,
   openModalSemana,guardarSemana,addSemPartida,updSemPersonal,renderSemPartidas,autoSemFin,
   openModalEval,guardarEval,updEvalBarra,elimSemana,
