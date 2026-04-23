@@ -1690,15 +1690,55 @@ async function abrirProyectoAdmin(id){
 // ============================================================
 async function loadProyectoData(){
   const pid = currentProyecto.id;
-  const colecciones = ['conceptos','movimientos','cortes','recursos','personal','semanas','bitacora','solicitudes','proveedores','materiales'];
-  proyectoData = {conceptos:[],movimientos:[],cortes:[],recursos:[],personal:[],semanas:[],bitacora:[],solicitudes:[],proveedores:[],materiales:[]};
+  const colecciones = ['conceptos','movimientos','cortes','recursos','personal','semanas','bitacora','solicitudes'];
+  proyectoData = {conceptos:[],movimientos:[],cortes:[],recursos:[],personal:[],semanas:[],bitacora:[],solicitudes:[]};
   await Promise.all(colecciones.map(async col=>{
     try {
       const snap = await getDocs(collection(db,'proyectos',pid,col));
       snap.forEach(d=>proyectoData[col].push({id:d.id,...d.data()}));
     } catch(e){ console.warn(col,e); }
   }));
+  // Cargar datos globales (compartidos entre proyectos)
+  await loadGlobalData();
   updHdr();
+}
+
+// ── Datos globales (materiales y proveedores compartidos entre proyectos) ──
+window._globalData = { materiales:[], proveedores:[] };
+
+async function loadGlobalData(){
+  for(const col of ['materiales','proveedores']){
+    try {
+      const snap = await getDocs(collection(db, col));
+      window._globalData[col] = [];
+      snap.forEach(d=>window._globalData[col].push({id:d.id,...d.data()}));
+    } catch(e){ console.warn('Global '+col, e); window._globalData[col]=[]; }
+  }
+  // Exponer en proyectoData para compatibilidad con código existente
+  proyectoData.materiales = window._globalData.materiales;
+  proyectoData.proveedores = window._globalData.proveedores;
+}
+
+async function saveGlobal(col, item){
+  // Actualizar array global
+  const arr = window._globalData[col]||[];
+  const idx = arr.findIndex(x=>String(x.id)===String(item.id));
+  if(idx>=0) arr[idx]=item; else arr.push(item);
+  window._globalData[col] = arr;
+  // Sincronizar proyectoData
+  proyectoData[col] = arr;
+  // Guardar en Firestore raíz (no dentro de proyecto)
+  try {
+    await setDoc(doc(db, col, String(item.id)), {...item, actualizadoEn:serverTimestamp()});
+  } catch(e){ showToast('Error al guardar: '+e.message,'err'); throw e; }
+}
+
+async function deleteGlobal(col, id){
+  window._globalData[col] = (window._globalData[col]||[]).filter(x=>String(x.id)!==String(id));
+  proyectoData[col] = window._globalData[col];
+  try {
+    await deleteDoc(doc(db, col, String(id)));
+  } catch(e){ showToast('Error al eliminar: '+e.message,'err'); throw e; }
 }
 
 async function saveToFirestore(coleccion, data, docId=null){
@@ -1720,7 +1760,13 @@ async function deleteFromFirestore(coleccion, docId){
 }
 
 // Local save helpers — sync local array then push to Firestore
+const COLS_GLOBALES = ['materiales','proveedores'];
+
 async function saveItem(col, item){
+  if(COLS_GLOBALES.includes(col)){
+    await saveGlobal(col, item);
+    return;
+  }
   const idx = proyectoData[col].findIndex(x=>String(x.id)===String(item.id));
   if(idx>=0) proyectoData[col][idx]=item; else proyectoData[col].push(item);
   await saveToFirestore(col, item, item.id);
@@ -1728,6 +1774,10 @@ async function saveItem(col, item){
 }
 
 async function deleteItem(col, id){
+  if(COLS_GLOBALES.includes(col)){
+    await deleteGlobal(col, id);
+    return;
+  }
   proyectoData[col] = proyectoData[col].filter(x=>String(x.id)!==String(id));
   await deleteFromFirestore(col, id);
   await logActividad('eliminar','Eliminó de '+col, currentProyecto.id);
@@ -3377,12 +3427,8 @@ function importarXLSX(evt){
 
 // ── Proveedores (guardados en proyectoData.proveedores) ──
 async function loadProveedores(){
-  try {
-    if(!proyectoData.proveedores) proyectoData.proveedores=[];
-    const snap=await getDocs(collection(db,'proyectos',currentProyecto.id,'proveedores'));
-    proyectoData.proveedores=[];
-    snap.forEach(d=>proyectoData.proveedores.push({id:d.id,...d.data()}));
-  } catch(e){ proyectoData.proveedores=[]; }
+  // Ahora los proveedores son globales — recargar desde Firestore raíz
+  await loadGlobalData();
 }
 
 function renderSolProveedores(selVal){
@@ -4721,7 +4767,7 @@ Object.assign(window,{
   openModalBitacora,guardarBitacora,elimBitacora,renderBitacora,
   renderNomina,updNomDestajo,
   importarXLSX,renderGlobalDashboard,updSemResponsable,loadAdminProyectos,loadAdminUsuarios,loadAdminActividad,
-  irASolicitudes,renderGastosTab,openModalSolicitud,guardarSolicitud,
+  irASolicitudes,renderGastosTab,openModalSolicitud,guardarSolicitud,loadGlobalData,
   aprobarSolicitud,rechazarSolicitud,convertirAGasto,eliminarSolicitud,renderSolicitudes,
   onSolCat,onSolConc,onSolProvSelect,toggleNuevoProv,guardarProveedorNuevo,renderSolProveedores,
   addSolItem,delSolItem,updSolItem,renderSolItems,renderSolItemSugs,selSolItemMat,updSolTotal,
