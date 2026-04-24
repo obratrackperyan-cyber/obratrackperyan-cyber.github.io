@@ -1936,20 +1936,49 @@ function renderDash(){
   if(semAct||persActivos.length){
     semsRow.style.display='grid';
     if(semAct){
+      const partsActivas=(semAct.partidas||[]).filter(p=>p.partida);
+      // Calcular cumplimiento global en tiempo real
+      const conAvance=partsActivas.filter(p=>getAv(p.partida)>0);
+      const avgCum=conAvance.length?Math.round(conAvance.reduce((s,p)=>{
+        const pp=parseFloat(p.pct_prog)||100,pr=getAv(p.partida);
+        return s+Math.min(pr/pp*100,200);
+      },0)/conAvance.length):null;
+      const cumCol=avgCum===null?'var(--tx3)':avgCum>=100?'var(--gn)':avgCum>=70?'var(--am)':'var(--rd)';
       document.getElementById('dash-sem-card').innerHTML=`
-        <div class="ct" style="margin-bottom:8px">📅 Semana ${semAct.num} en curso <button class="btn btn-sm" onclick="showPage('programa')">Ver →</button></div>
-        <div style="font-size:12px;color:var(--tx3);margin-bottom:10px">📅 ${fmtF(semAct.ini)} — ${fmtF(semAct.fin)}</div>
-        ${(semAct.partidas||[]).filter(p=>p.partida).map(p=>{
+        <div class="ct" style="margin-bottom:6px">📅 Semana ${semAct.num} en curso
+          ${avgCum!==null?`<span style="font-size:12px;font-weight:700;color:${cumCol};margin-left:8px">${avgCum>=100?'✅':avgCum>=70?'⚠️':'❌'} ${avgCum}% cumpl.</span>`:''}
+          <button class="btn btn-sm" onclick="showPage('programa')" style="margin-left:auto">Ver →</button>
+        </div>
+        <div style="font-size:11px;color:var(--tx3);margin-bottom:10px">📅 ${fmtF(semAct.ini)} — ${fmtF(semAct.fin)}</div>
+        ${partsActivas.map(p=>{
           const conc=p.conceptoId?(proyectoData.conceptos||[]).find(c=>String(c.id)===String(p.conceptoId)):null;
           const cat=p.categoria||conc?.categoria||'';
-          return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:0.5px solid var(--bo)">
-            <div>
-              <div style="font-size:12px;font-weight:700">${p.partida}</div>
-              ${cat?`<div style="font-size:10px;color:var(--ac);font-weight:600">📁 ${cat}</div>`:''}
-              ${conc?`<div style="font-size:12px;color:var(--tx2)">${conc.concepto}</div>`:(p.concepto?`<div style="font-size:12px;color:var(--tx2)">${p.concepto}</div>`:'')}
-              ${p.desc?`<div style="font-size:11px;color:var(--tx3);font-style:italic">${p.desc}</div>`:''}
+          const pProg=parseFloat(p.pct_prog)||100;
+          const pReal=getAv(p.partida);
+          const cumP=pReal>0?Math.min(Math.round(pReal/pProg*100),200):null;
+          const barColor=cumP===null?'var(--bo2)':cumP>=100?'var(--gn)':cumP>=70?'var(--am)':'var(--rd)';
+          const barProg=Math.min(pProg,100);
+          const barReal=Math.min(pReal,100);
+          return`<div style="padding:8px 0;border-bottom:0.5px solid var(--bo)">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px">
+              <div style="flex:1;min-width:0;margin-right:10px">
+                <div style="font-size:12px;font-weight:700">${p.partida}</div>
+                ${cat?`<div style="font-size:10px;color:var(--ac);font-weight:600">📁 ${cat}</div>`:''}
+                ${conc?`<div style="font-size:12px;color:var(--tx2)">${conc.concepto}</div>`:(p.concepto?`<div style="font-size:12px;color:var(--tx2)">${p.concepto}</div>`:'')}
+                ${p.desc?`<div style="font-size:11px;color:var(--tx3);font-style:italic">${p.desc}</div>`:''}
+              </div>
+              <div style="text-align:right;flex-shrink:0">
+                <div style="font-size:13px;font-weight:700;color:var(--bl)">${pProg}%<span style="font-size:10px;color:var(--tx3);font-weight:400"> prog</span></div>
+                ${pReal>0?`<div style="font-size:13px;font-weight:700;color:${barColor}">${pReal}%<span style="font-size:10px;color:var(--tx3);font-weight:400"> real</span></div>`:'<div style="font-size:10px;color:var(--tx3)">Sin avance</div>'}
+              </div>
             </div>
-            <span class="badge ba" style="white-space:nowrap">${p.pct_prog||100}%</span>
+            <!-- Barra comparativa -->
+            <div style="position:relative;height:6px;background:var(--sur2);border-radius:3px;overflow:hidden">
+              <div style="position:absolute;left:0;top:0;height:100%;width:${barProg}%;background:rgba(72,107,159,.2);border-radius:3px"></div>
+              ${pReal>0?`<div style="position:absolute;left:0;top:0;height:100%;width:${barReal}%;background:${barColor};border-radius:3px;transition:width .4s"></div>`:''}
+              <div style="position:absolute;top:0;left:${barProg}%;height:100%;width:2px;background:var(--bl)"></div>
+            </div>
+            ${cumP!==null?`<div style="text-align:right;font-size:10px;color:${barColor};margin-top:2px;font-weight:600">${cumP>=100?'✅ Cumplido':cumP>=70?'⚠️ '+cumP+'% cumpl.':'❌ '+cumP+'% cumpl.'}</div>`:''}
           </div>`;
         }).join('')}`;
     } else {
@@ -3065,29 +3094,65 @@ function renderPrograma(){
     <div class="met ${cumGlobal===null?'':cumGlobal>=80?'cg':cumGlobal>=60?'cb':'cr'}"><div class="ml">Cumplimiento</div><div class="mv">${cumGlobal!==null?cumGlobal+'%':'—'}</div></div>
     <div class="met cb"><div class="ml">Personal prom.</div><div class="mv">${cerradas.length?Math.round(cerradas.reduce((s,sem)=>s+(sem.eval?.personal_real||0),0)/cerradas.length):0}</div></div>`;
   const progAddBtn = document.getElementById('prog-add-btn');
-  if(progAddBtn) progAddBtn.innerHTML = esGerencia() ? `<button class="btn btn-p" onclick="openModalSemana()">+ Nueva semana</button>` : '';
+  if(progAddBtn) progAddBtn.innerHTML = `
+    ${esGerencia()?'<button class="btn btn-p" onclick="openModalSemana()">+ Nueva semana</button>':''}
+    <button class="btn" onclick="imprimirPrograma()">🖨 Imprimir</button>`;
   if(!sems.length){document.getElementById('prog-lista').innerHTML='<div class="empty"><div class="ei">📅</div><p>Sin semanas programadas</p></div>';return;}
   document.getElementById('prog-lista').innerHTML=sems.map(sem=>{
     const ev=sem.eval,cum=ev?.cumplimiento_global??null;
     const cumCol=cum===null?'bx':cum>=80?'bg':cum>=60?'ba':'br';
     const estIcon=sem.cerrada?'✅':new Date(sem.fin+'T23:59:00')<new Date()?'⏰':'🔄';
     const partRows=(sem.partidas||[]).filter(p=>p.partida||p.conceptoId).map(p=>{
+      // Avance evaluado (cierre de semana)
       const ep=ev?(ev.partidas||[]).find(x=>x.partida===p.partida):null;
-      const pReal=ep?.pct_real??null,cumP=ep?.cumplimiento??null;
+      const pEval=ep?.pct_real??null;
+      // Avance real actual desde cortes de avance (tiempo real)
+      const avReal=getAv(p.partida);
+      const pProg=parseFloat(p.pct_prog)||100;
+      // Usar evaluado si la semana está cerrada, sino el avance real del módulo
+      const pReal=sem.cerrada&&pEval!==null ? pEval : (avReal>0?avReal:null);
+      const cumP=pReal!==null ? Math.min(Math.round(pReal/pProg*100),200) : null;
+      // Color según cumplimiento
+      const cumCol=cumP===null?'var(--tx3)':cumP>=100?'var(--gn)':cumP>=70?'var(--am)':'var(--rd)';
+      const cumBg=cumP===null?'var(--sur2)':cumP>=100?'var(--gnb)':cumP>=70?'var(--amb)':'var(--rdb)';
+      // Barra visual doble: programado (azul) vs real (color)
+      const barProg=Math.min(pProg,100);
+      const barReal=pReal!==null?Math.min(pReal,100):0;
       const persN=(p.personal_ids||[]).map(pid=>{const per=(proyectoData.personal||[]).find(x=>String(x.id)===String(pid));return per?per.nombre.split(' ')[0]:'';}).filter(Boolean).join(', ');
       const concNom=p.conceptoId?((proyectoData.conceptos||[]).find(c=>String(c.id)===String(p.conceptoId))?.concepto||''):p.concepto||'';
       const catNom=p.categoria||'';
       return`<tr>
-        <td>
+        <td style="min-width:160px">
           <div style="font-size:12px;font-weight:700">${p.partida||'—'}</div>
           ${catNom?`<div style="font-size:10px;color:var(--ac);font-weight:600;margin-top:1px">📁 ${catNom}</div>`:''}
           ${concNom?`<div style="font-size:12px;color:var(--tx2);margin-top:1px">${concNom}</div>`:''}
           ${p.desc?`<div style="font-size:11px;color:var(--tx3);font-style:italic">${p.desc}</div>`:''}
           ${persN?`<span class="badge bb" style="font-size:10px;margin-top:3px">👷 ${persN}</span>`:''}
         </td>
-        <td style="text-align:center;font-weight:600;color:var(--bl)">${p.pct_prog||100}%</td>
-        <td style="text-align:center;font-weight:600;color:var(--ac)">${pReal!==null?pReal+'%':'—'}</td>
-        <td style="text-align:center">${cumP!==null?`<span class="badge ${cumP>=100?'bg':cumP>=70?'ba':'br'}">${cumP}%</span>`:'<span class="badge bx">—</span>'}</td></tr>`;
+        <td style="text-align:center">
+          <div style="font-size:15px;font-weight:700;color:var(--bl)">${pProg}%</div>
+          <div style="font-size:10px;color:var(--tx3)">programado</div>
+        </td>
+        <td style="text-align:center">
+          <div style="font-size:15px;font-weight:700;color:${pReal!==null?'var(--ac)':'var(--tx3)'}">${pReal!==null?pReal+'%':'—'}</div>
+          <div style="font-size:10px;color:var(--tx3)">${sem.cerrada&&pEval!==null?'evaluado':'avance real'}</div>
+        </td>
+        <td style="min-width:120px">
+          <!-- Barra comparativa -->
+          <div style="position:relative;height:18px;background:var(--sur2);border-radius:9px;overflow:hidden;margin-bottom:4px">
+            <!-- Fondo programado -->
+            <div style="position:absolute;left:0;top:0;height:100%;width:${barProg}%;background:rgba(72,107,159,.18);border-radius:9px"></div>
+            <!-- Real -->
+            ${pReal!==null?`<div style="position:absolute;left:0;top:0;height:100%;width:${barReal}%;background:${cumP>=100?'var(--gn)':cumP>=70?'var(--am)':'var(--rd)'};border-radius:9px;transition:width .4s"></div>`:''}
+            <!-- Marcador programado -->
+            <div style="position:absolute;top:0;left:${barProg}%;height:100%;width:2px;background:var(--bl);z-index:2"></div>
+          </div>
+          <div style="text-align:center">
+            ${cumP!==null
+              ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:${cumBg};color:${cumCol}">${cumP>=100?'✅':cumP>=70?'⚠️':'❌'} ${cumP}%</span>`
+              : `<span style="font-size:11px;color:var(--tx3)">Sin avance</span>`}
+          </div>
+        </td>`;
     }).join('');
     return`<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap;gap:8px">
@@ -3105,7 +3170,31 @@ function renderPrograma(){
           ${esGerencia()?`<button class="btn btn-sm btn-d" onclick="elimSemana('${sem.id}')">✕</button>`:''}
         </div>
       </div>
-      <div class="tw"><table><thead><tr><th>Partida</th><th style="text-align:center">Prog.</th><th style="text-align:center">Ejecutado</th><th style="text-align:center">Cumplimiento</th></tr></thead><tbody>${partRows}</tbody></table></div>
+      <div class="tw"><table><thead><tr><th>Partida / Concepto</th><th style="text-align:center;width:80px">Programado</th><th style="text-align:center;width:80px">Avance real</th><th style="text-align:center;width:160px">Cumplimiento</th></tr></thead><tbody>${partRows}</tbody></table></div>
+      ${(()=>{
+        // Resumen en tiempo real para semanas no cerradas
+        const parts=(sem.partidas||[]).filter(p=>p.partida);
+        if(!sem.cerrada && parts.length){
+          const avances=parts.map(p=>({prog:parseFloat(p.pct_prog)||100,real:getAv(p.partida)}));
+          const conAvance=avances.filter(a=>a.real>0);
+          if(conAvance.length){
+            const avgCum=Math.round(conAvance.reduce((s,a)=>s+Math.min(a.real/a.prog*100,200),0)/conAvance.length);
+            const cumCol=avgCum>=100?'var(--gn)':avgCum>=70?'var(--am)':'var(--rd)';
+            return`<div style="margin-top:10px;border-top:0.5px solid var(--bo);padding-top:10px;display:flex;gap:10px;flex-wrap:wrap">
+              <div style="background:var(--sur2);padding:8px 16px;border-radius:8px;text-align:center">
+                <div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px">Cumplimiento promedio</div>
+                <div style="font-size:20px;font-weight:700;color:${cumCol}">${avgCum}%</div>
+                <div style="font-size:10px;color:var(--tx3)">${conAvance.length} de ${parts.length} partidas con avance</div>
+              </div>
+              <div style="background:var(--sur2);padding:8px 16px;border-radius:8px;text-align:center;flex:1;min-width:100px">
+                <div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px">Estado</div>
+                <div style="font-size:14px;font-weight:600;color:${cumCol};margin-top:4px">${avgCum>=100?'✅ En tiempo':avgCum>=70?'⚠️ Con rezago':'❌ Retrasado'}</div>
+              </div>
+            </div>`;
+          }
+        }
+        return '';
+      })()}
       ${ev?`<div style="margin-top:12px;border-top:0.5px solid var(--bo);padding-top:12px">
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px">
           <div style="text-align:center;background:var(--sur2);padding:8px 14px;border-radius:8px;flex:1;min-width:80px">
@@ -4172,6 +4261,149 @@ function imprimirSolicitud(id){
   win.onload=()=>{ win.focus(); win.print(); };
 }
 
+function imprimirPrograma(){
+  const sems=[...(proyectoData.semanas||[])].sort((a,b)=>a.ini.localeCompare(b.ini));
+  if(!sems.length){showToast('Sin semanas para imprimir','err');return;}
+  const proyecto=currentProyecto?.nombre||'';
+  const empresa=currentProyecto?.empresa||'';
+  const fechaImp=new Date().toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'});
+  const mxFmt=n=>'$'+Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  const estilos=`
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1c1a17;}
+    .pagina{padding:20px 24px;max-width:900px;margin:0 auto;page-break-after:always;}
+    .pagina:last-child{page-break-after:avoid;}
+    .logo{font-size:20px;font-weight:700;color:#1c1a17}.logo span{color:#b87333}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #b87333;padding-bottom:10px;margin-bottom:14px}
+    .sem-titulo{font-size:16px;font-weight:700;margin-bottom:2px}
+    .sem-fecha{font-size:12px;color:#5c5a52}
+    .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
+    .section-title{font-size:10px;color:#9a9890;text-transform:uppercase;letter-spacing:.5px;margin:10px 0 5px}
+    table{width:100%;border-collapse:collapse}
+    th{background:#f4f2ed;padding:6px 8px;text-align:left;font-size:10px;font-weight:600;color:#5c5a52;border:0.5px solid #ddd}
+    td{padding:6px 8px;border:0.5px solid #ddd;vertical-align:middle;font-size:11px}
+    .bar-wrap{position:relative;height:14px;background:#ede9e1;border-radius:7px;overflow:hidden;min-width:80px}
+    .bar-prog{position:absolute;top:0;left:0;height:100%;background:rgba(72,107,159,.25);border-radius:7px}
+    .bar-real{position:absolute;top:0;left:0;height:100%;border-radius:7px}
+    .bar-mark{position:absolute;top:0;height:100%;width:2px;background:#486b9f;z-index:2}
+    .resumen{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+    .res-box{background:#f4f2ed;padding:8px 14px;border-radius:7px;text-align:center;flex:1;min-width:80px}
+    .res-num{font-size:18px;font-weight:700}
+    .res-lbl{font-size:9px;color:#9a9890;text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
+    .firma-row{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:28px}
+    .firma{border-top:1px solid #1c1a17;margin-top:36px;padding-top:5px;text-align:center;font-size:10px;color:#5c5a52}
+    @media print{.pagina{padding:14px 18px}}`;
+
+  const paginasHTML = sems.map((sem,si)=>{
+    const ev=sem.eval;
+    const cum=ev?.cumplimiento_global??null;
+    const estLabel=sem.cerrada?'Evaluada':new Date(sem.fin+'T23:59:00')<new Date()?'Pendiente cierre':'En ejecución';
+    const estColor=sem.cerrada?'#2e6b47':new Date(sem.fin+'T23:59:00')<new Date()?'#8a6010':'#486b9f';
+    const estBg=sem.cerrada?'#e4f2ea':new Date(sem.fin+'T23:59:00')<new Date()?'#faf0d8':'#e8eef8';
+
+    const parts=(sem.partidas||[]).filter(p=>p.partida||p.conceptoId);
+    const filas=parts.map((p,pi)=>{
+      const ep=ev?(ev.partidas||[]).find(x=>x.partida===p.partida):null;
+      const pProg=parseFloat(p.pct_prog)||100;
+      const avReal=getAv(p.partida);
+      const pReal=sem.cerrada&&ep?.pct_real!=null?ep.pct_real:(avReal>0?avReal:null);
+      const cumP=pReal!==null?Math.min(Math.round(pReal/pProg*100),200):null;
+      const cumColor=cumP===null?'#9a9890':cumP>=100?'#2e6b47':cumP>=70?'#8a6010':'#b52e2e';
+      const cumBg=cumP===null?'#f4f2ed':cumP>=100?'#e4f2ea':cumP>=70?'#faf0d8':'#fbeaea';
+      const barProg=Math.min(pProg,100);
+      const barReal=pReal!=null?Math.min(pReal,100):0;
+      const barColor=cumP===null?'#9a9890':cumP>=100?'#2e6b47':cumP>=70?'#c8920a':'#b52e2e';
+      const conc=p.conceptoId?((proyectoData.conceptos||[]).find(c=>String(c.id)===String(p.conceptoId))?.concepto||''):p.concepto||'';
+      const pers=(p.personal_ids||[]).map(pid=>{const per=(proyectoData.personal||[]).find(x=>String(x.id)===String(pid));return per?per.nombre.split(' ')[0]:'';}).filter(Boolean).join(', ');
+      return`<tr>
+        <td style="font-weight:600">${p.partida||'—'}${p.categoria?`<div style="font-size:9px;color:#b87333">📁 ${p.categoria}</div>`:''}</td>
+        <td>${conc||p.desc||''}</td>
+        <td style="text-align:center">${pers||'—'}</td>
+        <td style="text-align:center;font-weight:700;color:#486b9f">${pProg}%</td>
+        <td style="text-align:center;font-weight:700;color:${pReal!==null?'#b87333':'#9a9890'}">${pReal!==null?pReal+'%':'—'}</td>
+        <td style="min-width:90px">
+          <div class="bar-wrap">
+            <div class="bar-prog" style="width:${barProg}%"></div>
+            ${pReal!==null?`<div class="bar-real" style="width:${barReal}%;background:${barColor}"></div>`:''}
+            <div class="bar-mark" style="left:${barProg}%"></div>
+          </div>
+        </td>
+        <td style="text-align:center">
+          ${cumP!==null?`<span class="badge" style="background:${cumBg};color:${cumColor}">${cumP>=100?'✅':cumP>=70?'⚠':'❌'} ${cumP}%</span>`:'<span style="color:#9a9890">—</span>'}
+        </td>
+      </tr>`;
+    }).join('');
+
+    // Resumen de evaluación si existe
+    let resumenHTML='';
+    if(ev){
+      const cumC=cum>=80?'#2e6b47':cum>=60?'#8a6010':'#b52e2e';
+      resumenHTML=`<div class="resumen">
+        <div class="res-box"><div class="res-num" style="color:${cumC}">${cum}%</div><div class="res-lbl">Cumplimiento global</div></div>
+        ${ev.personal_real!=null?`<div class="res-box"><div class="res-num">${ev.personal_real}</div><div class="res-lbl">Personal real</div></div>`:''}
+        ${ev.personal_prog!=null?`<div class="res-box"><div class="res-num">${ev.personal_prog}</div><div class="res-lbl">Personal programado</div></div>`:''}
+        ${ev.observaciones?`<div class="res-box" style="flex:3;text-align:left"><div style="font-size:9px;color:#9a9890;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Observaciones</div><div style="font-size:11px">${ev.observaciones}</div></div>`:''}
+      </div>`;
+    } else {
+      // Resumen en tiempo real
+      const conAvance=parts.filter(p=>getAv(p.partida)>0);
+      if(conAvance.length){
+        const avgCum=Math.round(conAvance.reduce((s,p)=>{
+          const pp=parseFloat(p.pct_prog)||100, pr=getAv(p.partida);
+          return s+Math.min(pr/pp*100,200);
+        },0)/conAvance.length);
+        const cumC=avgCum>=100?'#2e6b47':avgCum>=70?'#8a6010':'#b52e2e';
+        resumenHTML=`<div class="resumen">
+          <div class="res-box"><div class="res-num" style="color:${cumC}">${avgCum}%</div><div class="res-lbl">Cumplimiento promedio</div></div>
+          <div class="res-box"><div class="res-num">${conAvance.length}/${parts.length}</div><div class="res-lbl">Partidas con avance</div></div>
+          <div class="res-box" style="flex:2"><div style="font-size:12px;font-weight:600;color:${cumC};margin-top:8px">${avgCum>=100?'✅ En tiempo':avgCum>=70?'⚠️ Con rezago':'❌ Retrasado'}</div><div class="res-lbl">Estado general</div></div>
+        </div>`;
+      }
+    }
+
+    return`<div class="pagina">
+      <div class="header">
+        <div>
+          <div class="logo">Mi<span>Obra</span> <span style="font-size:12px;color:#5c5a52;font-weight:400">· Programa Semanal</span></div>
+          <div style="font-size:12px;color:#5c5a52;margin-top:2px">${proyecto}${empresa?' · '+empresa:''}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="sem-titulo">Semana ${sem.num}</div>
+          <div class="sem-fecha">📅 ${sem.ini?new Date(sem.ini+'T12:00:00').toLocaleDateString('es-MX',{day:'2-digit',month:'short',year:'numeric'}):''} — ${sem.fin?new Date(sem.fin+'T12:00:00').toLocaleDateString('es-MX',{day:'2-digit',month:'short',year:'numeric'}):''}</div>
+          <div style="margin-top:4px">
+            <span class="badge" style="background:${estBg};color:${estColor}">${estLabel}</span>
+            ${cum!==null?`<span class="badge" style="background:${cum>=80?'#e4f2ea':cum>=60?'#faf0d8':'#fbeaea'};color:${cum>=80?'#2e6b47':cum>=60?'#8a6010':'#b52e2e'};margin-left:5px">${cum}% cumplimiento</span>`:''}
+          </div>
+          ${sem.responsable?`<div style="font-size:11px;color:#5c5a52;margin-top:3px">👷 ${sem.responsable}</div>`:''}
+        </div>
+      </div>
+      <div class="section-title">Partidas programadas</div>
+      <table>
+        <thead><tr>
+          <th style="width:70px">Partida</th><th>Concepto</th><th style="width:90px;text-align:center">Personal</th>
+          <th style="width:60px;text-align:center">Prog.</th><th style="width:60px;text-align:center">Real</th>
+          <th style="width:100px;text-align:center">Avance</th><th style="width:75px;text-align:center">Cumpl.</th>
+        </tr></thead>
+        <tbody>${filas||'<tr><td colspan="7" style="text-align:center;color:#9a9890;padding:12px">Sin partidas programadas</td></tr>'}</tbody>
+      </table>
+      ${resumenHTML}
+      <div style="margin-top:6px;font-size:9px;color:#9a9890;text-align:right">Impreso el ${fechaImp} · Página ${si+1} de ${sems.length}</div>
+      <div class="firma-row">
+        <div><div class="firma">Residente de obra · Firma y nombre</div></div>
+        <div><div class="firma">Gerencia · Firma y nombre</div></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Programa Semanal · ${proyecto}</title>
+  <style>${estilos}</style></head><body>${paginasHTML}</body></html>`;
+  const win=window.open('','_blank','width=960,height=780');
+  win.document.write(html);
+  win.document.close();
+  win.onload=()=>{win.focus();win.print();};
+}
+
 let _solicitudParaConvertir=null;
 
 
@@ -4763,7 +4995,7 @@ Object.assign(window,{
   openModalRecurso,openModalRecursoConc,guardarRecurso,elimRecurso,setRecTipo,updRecTotal,renderRecursos,
   openModalPersonal,guardarPersonal,elimPersonal,toggleActivoPersonal,setPTipo,renderPersonal,
   openModalSemana,guardarSemana,addSemPartida,updSemPersonal,renderSemPartidas,autoSemFin,
-  openModalEval,guardarEval,updEvalBarra,elimSemana,
+  openModalEval,guardarEval,updEvalBarra,elimSemana,imprimirPrograma,
   openModalBitacora,guardarBitacora,elimBitacora,renderBitacora,
   renderNomina,updNomDestajo,
   importarXLSX,renderGlobalDashboard,updSemResponsable,loadAdminProyectos,loadAdminUsuarios,loadAdminActividad,
