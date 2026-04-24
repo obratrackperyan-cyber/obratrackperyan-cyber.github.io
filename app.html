@@ -707,6 +707,68 @@ tbody tr:hover td{background:var(--sur2);}
   </div>
 </div>
 
+<!-- Fotos catálogo - subir + cámara -->
+<div class="modal-bg" id="modal-cat-fotos" onclick="if(event.target===this)closeCatFotos()">
+  <div class="modal" style="max-width:580px">
+    <div class="mh">
+      <div class="mt" id="cat-fotos-titulo">Fotos del área</div>
+      <button class="mc" onclick="closeCatFotos()">✕</button>
+    </div>
+    <!-- Tabs galería / cámara -->
+    <div class="ftabs" style="margin-bottom:12px">
+      <button class="ftab active" id="ktab-gal" onclick="swTab('k','gal')">🖼 Galería</button>
+      <button class="ftab" id="ktab-cam" onclick="swTab('k','cam')">📷 Cámara</button>
+    </div>
+    <!-- Panel galería -->
+    <div id="kpanel-gal">
+      <label style="display:flex;align-items:center;gap:10px;background:var(--acl);border:1.5px dashed var(--ac);border-radius:9px;padding:14px;cursor:pointer;margin-bottom:10px;justify-content:center">
+        <span style="font-size:24px">🖼</span>
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--ac)">Seleccionar fotos</div>
+          <div style="font-size:11px;color:var(--tx3)">JPG, PNG — puedes seleccionar varias a la vez</div>
+        </div>
+        <input type="file" accept="image/*" multiple onchange="onCatGal(event)" style="display:none">
+      </label>
+    </div>
+    <!-- Panel cámara -->
+    <div id="kpanel-cam" style="display:none">
+      <div style="position:relative;background:#000;border-radius:10px;overflow:hidden;margin-bottom:10px">
+        <video id="kvid" autoplay playsinline style="width:100%;max-height:280px;object-fit:cover;display:block"></video>
+        <div id="kov" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;background:rgba(0,0,0,.5)">Iniciando cámara...</div>
+        <button onclick="flipCam('k')" style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,.5);color:#fff;border:none;border-radius:20px;padding:5px 10px;cursor:pointer;font-size:12px">🔄</button>
+      </div>
+      <button onclick="capturar('k')" style="width:100%;padding:12px;background:var(--ac);color:#fff;border:none;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:10px">📸 Capturar foto</button>
+    </div>
+    <!-- Fotos pendientes -->
+    <div id="cat-fotos-pend" style="max-height:260px;overflow-y:auto">
+      <div style="text-align:center;padding:16px;color:var(--tx3);font-size:13px">Selecciona imágenes o toma fotos con la cámara</div>
+    </div>
+    <div class="brow" style="margin-top:12px">
+      <button class="btn btn-p" onclick="guardarCatFotos()">💾 Guardar fotos</button>
+      <button class="btn" onclick="closeCatFotos()">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Fotos catálogo - lightbox -->
+<div class="modal-bg" id="modal-cat-lb" onclick="if(event.target===this)closeCatLB()" style="background:rgba(0,0,0,.88)">
+  <div style="position:relative;max-width:90vw;max-height:90vh;display:flex;flex-direction:column;align-items:center;gap:10px">
+    <img id="cat-lb-img" src="" style="max-width:90vw;max-height:75vh;object-fit:contain;border-radius:8px">
+    <div style="display:flex;align-items:center;gap:12px">
+      <button onclick="catLBNav(-1)" style="background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:18px">‹</button>
+      <div style="text-align:center">
+        <div id="cat-lb-cap" style="color:#fff;font-size:13px;max-width:400px"></div>
+        <div id="cat-lb-cnt" style="color:rgba(255,255,255,.5);font-size:11px;margin-top:2px"></div>
+      </div>
+      <button onclick="catLBNav(1)" style="background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:18px">›</button>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button id="cat-lb-del-btn" onclick="elimCatFoto()" style="background:rgba(181,46,46,.7);color:#fff;border:none;border-radius:6px;padding:5px 14px;cursor:pointer;font-size:12px">🗑 Eliminar</button>
+      <button onclick="closeCatLB()" style="background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:6px;padding:5px 14px;cursor:pointer;font-size:12px">✕ Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Concepto -->
 <div class="modal-bg" id="modal-conc">
   <div class="modal"><div class="mh"><div class="mt">Nuevo concepto</div><button class="mc" onclick="closeModal('modal-conc')">✕</button></div>
@@ -1938,11 +2000,12 @@ function renderDash(){
     if(semAct){
       const partsActivas=(semAct.partidas||[]).filter(p=>p.partida);
       // Calcular cumplimiento global en tiempo real
+      // Cumplimiento: todas las partidas, las sin avance cuentan 0%
+      const avgCum=partsActivas.length?Math.round(partsActivas.reduce((s,p)=>{
+        const pp=parseFloat(p.pct_prog)||100, pr=getAv(p.partida)||0;
+        return s+(pr/pp*100); // sin cap de 200 para el promedio
+      },0)/partsActivas.length):null;
       const conAvance=partsActivas.filter(p=>getAv(p.partida)>0);
-      const avgCum=conAvance.length?Math.round(conAvance.reduce((s,p)=>{
-        const pp=parseFloat(p.pct_prog)||100,pr=getAv(p.partida);
-        return s+Math.min(pr/pp*100,200);
-      },0)/conAvance.length):null;
       const cumCol=avgCum===null?'var(--tx3)':avgCum>=100?'var(--gn)':avgCum>=70?'var(--am)':'var(--rd)';
       document.getElementById('dash-sem-card').innerHTML=`
         <div class="ct" style="margin-bottom:6px">📅 Semana ${semAct.num} en curso
@@ -2115,9 +2178,28 @@ function renderCat(){
       </div>
     </div>
     <div class="tw"><table><thead><tr><th>Concepto</th><th>Cat.</th><th>Unidad</th><th>Cant.</th><th>P.U.</th><th>Total</th>${esGerencia()?'<th></th>':''}</tr></thead>
-    <tbody>${items.map(i=>`<tr><td>${i.concepto}</td><td><span class="badge bb">${i.categoria}</span></td><td>${i.unidad}</td>
-    <td>${fmtN(i.cantidad)}</td><td>${fmt(precioNeto(i.precio))}</td><td style="font-weight:600">${fmt(i.cantidad*precioNeto(i.precio))}</td>
-    ${esGerencia()?`<td><button class="btn btn-sm btn-d" onclick="elimConc('${i.id}')">✕</button></td>`:''}</tr>`).join('')}</tbody></table></div></div>`;
+    <tbody>${items.map(i=>{
+      const fotos=i.fotos||[];
+      return`<tr>
+        <td>
+          <div>${i.concepto}</div>
+          ${fotos.length?`<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px">
+            ${fotos.slice(0,4).map((f,fi)=>`<img src="${f.url}" onclick="openCatLB('${i.id}',${fi})"
+              style="width:40px;height:40px;object-fit:cover;border-radius:5px;cursor:pointer;border:1px solid var(--bo)">`).join('')}
+            ${fotos.length>4?`<div style="width:40px;height:40px;background:var(--sur2);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--tx3);cursor:pointer;border:1px solid var(--bo)" onclick="openCatLB('${i.id}',0)">+${fotos.length-4}</div>`:''}
+          </div>`:''}
+        </td>
+        <td><span class="badge bb">${i.categoria}</span></td>
+        <td>${i.unidad}</td>
+        <td>${fmtN(i.cantidad)}</td>
+        <td>${fmt(precioNeto(i.precio))}</td>
+        <td style="font-weight:600">${fmt(i.cantidad*precioNeto(i.precio))}</td>
+        ${esGerencia()?`<td style="white-space:nowrap">
+          <button class="btn btn-sm" onclick="openCatFotos('${i.id}')" title="Fotos del área">📷${fotos.length?` <span style="font-size:10px">${fotos.length}</span>`:''}</button>
+          <button class="btn btn-sm btn-d" onclick="elimConc('${i.id}')" style="margin-left:3px">✕</button>
+        </td>`:''}
+      </tr>`;
+    }).join('')}</tbody></table></div></div>`;
   }).join('');
 }
 
@@ -2135,6 +2217,112 @@ async function guardarConc(){
 async function elimConc(id){
   if(!confirm('¿Eliminar?'))return;
   await deleteItem('conceptos',id);renderCat();
+}
+
+// Lightbox catálogo
+let _catLBId=null, _catLBIdx=0;
+function openCatLB(concId, idx){
+  _catLBId=concId; _catLBIdx=idx;
+  renderCatLB();
+  document.getElementById('modal-cat-lb').classList.add('open');
+}
+function closeCatLB(){ document.getElementById('modal-cat-lb').classList.remove('open'); }
+function catLBNav(dir){
+  const conc=(proyectoData.conceptos||[]).find(x=>String(x.id)===String(_catLBId));
+  if(!conc) return;
+  const fotos=conc.fotos||[];
+  _catLBIdx=(_catLBIdx+dir+fotos.length)%fotos.length;
+  renderCatLB();
+}
+function renderCatLB(){
+  const conc=(proyectoData.conceptos||[]).find(x=>String(x.id)===String(_catLBId));
+  if(!conc) return;
+  const fotos=conc.fotos||[];
+  const f=fotos[_catLBIdx];
+  if(!f) return;
+  const el=document.getElementById('cat-lb-img');
+  if(el){ el.src=f.url; }
+  const cap=document.getElementById('cat-lb-cap');
+  if(cap) cap.textContent=(f.notas||'')+' '+(f.fecha?'· '+fmtF(f.fecha):'');
+  const cnt=document.getElementById('cat-lb-cnt');
+  if(cnt) cnt.textContent=(fotos.length>1?`${_catLBIdx+1}/${fotos.length}`:'');
+  const delBtn=document.getElementById('cat-lb-del-btn');
+  if(delBtn) delBtn.style.display=esGerencia()?'':'none';
+}
+function elimCatFoto(){
+  const conc=(proyectoData.conceptos||[]).find(x=>String(x.id)===String(_catLBId));
+  if(!conc||!esGerencia()) return;
+  if(!confirm('¿Eliminar esta foto?')) return;
+  conc.fotos=(conc.fotos||[]).filter((_,i)=>i!==_catLBIdx);
+  saveItem('conceptos',conc).then(()=>{ renderCat(); });
+  if(conc.fotos.length){ _catLBIdx=Math.min(_catLBIdx,conc.fotos.length-1); renderCatLB(); }
+  else closeCatLB();
+}
+
+// Modal subir fotos al catálogo
+let _catFotosId=null;
+let _catFotosPend=[];
+
+function openCatFotos(concId){
+  _catFotosId=concId;
+  _catFotosPend=[];
+  const conc=(proyectoData.conceptos||[]).find(x=>String(x.id)===String(concId));
+  const titulo=document.getElementById('cat-fotos-titulo');
+  if(titulo) titulo.textContent='Fotos — '+(conc?.partida||'')+' '+( conc?.concepto?.substring(0,40)||'');
+  renderCatFotosPend();
+  document.getElementById('modal-cat-fotos').classList.add('open');
+}
+function closeCatFotos(){
+  stopCam('k');
+  swTab('k','gal');
+  _catFotosPend=[];
+  document.getElementById('modal-cat-fotos').classList.remove('open');
+}
+
+function onCatGal(e){
+  const files=Array.from(e.target.files);
+  let done=0;
+  files.forEach(f=>{
+    const r=new FileReader();
+    r.onload=ev=>{
+      _catFotosPend.push({url:ev.target.result,notas:'',fecha:td(),fromCam:false});
+      done++;
+      if(done===files.length) renderCatFotosPend();
+    };
+    r.readAsDataURL(f);
+  });
+  e.target.value=''; // reset para poder seleccionar las mismas fotos de nuevo
+}
+
+function renderCatFotosPend(){
+  const el=document.getElementById('cat-fotos-pend');
+  if(!el) return;
+  if(!_catFotosPend.length){
+    el.innerHTML='<div style="text-align:center;padding:20px;color:var(--tx3);font-size:13px">Selecciona imágenes para agregar</div>';
+    return;
+  }
+  el.innerHTML=_catFotosPend.map((f,i)=>`
+    <div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:0.5px solid var(--bo)">
+      <img src="${f.url}" style="width:60px;height:60px;object-fit:cover;border-radius:7px;flex-shrink:0">
+      <div style="flex:1">
+        <input type="text" placeholder="Descripción (opcional)" value="${f.notas||''}"
+          oninput="_catFotosPend[${i}].notas=this.value"
+          style="width:100%;padding:6px 9px;border:0.5px solid var(--bo2);border-radius:6px;font-size:12px;font-family:var(--ff)">
+      </div>
+      <button class="btn btn-sm btn-d" onclick="_catFotosPend.splice(${i},1);renderCatFotosPend()">✕</button>
+    </div>`).join('');
+}
+
+async function guardarCatFotos(){
+  if(!_catFotosPend.length){showToast('Selecciona al menos una foto','err');return;}
+  const conc=(proyectoData.conceptos||[]).find(x=>String(x.id)===String(_catFotosId));
+  if(!conc) return;
+  if(!conc.fotos) conc.fotos=[];
+  _catFotosPend.forEach(f=>conc.fotos.push({url:f.url,notas:f.notas||'',fecha:td(),subidaPor:currentProfile.nombre||currentUser.email}));
+  await saveItem('conceptos',conc);
+  closeCatFotos();
+  renderCat();
+  showToast(`${_catFotosPend.length} foto${_catFotosPend.length!==1?'s':''} agregada${_catFotosPend.length!==1?'s':''}`);
 }
 
 // ============================================================
@@ -2198,7 +2386,10 @@ function renderGastos(){
       <td style="color:var(--tx3);font-size:12px">${m.ref||'—'}</td>
       <td><span class="badge ${m.tipo==='ingreso'?'bg':'br'}">${m.tipo}</span></td>
       <td style="font-weight:600;color:${m.tipo==='ingreso'?'var(--gn)':'var(--rd)'}">${m.tipo==='ingreso'?'+':'-'}${fmt(m.monto)}</td>
-      ${esGerencia()?`<td><button class="btn btn-sm btn-d" onclick="elimMov('${m.id}')">✕</button></td>`:''}</tr>`).join('')
+      ${esGerencia()?`<td style="white-space:nowrap">
+        <button class="btn btn-sm" onclick="editarMov('${m.id}')" style="margin-right:4px">✏️</button>
+        <button class="btn btn-sm btn-d" onclick="elimMov('${m.id}')">✕</button>
+      </td>`:''}</tr>`).join('')
     ||'<tr><td colspan="8" style="text-align:center;color:var(--tx3);padding:22px">Sin movimientos</td></tr>';
 }
 
@@ -2215,14 +2406,25 @@ async function guardarMov(){
   if(!monto||!concId){showToast('Selecciona un concepto e ingresa el monto','err');return;}
   const conc=getConcById(concId);
   if(!conc){showToast('Concepto no encontrado','err');return;}
-  const item={id:rnd(),tipo:document.getElementById('m-tipo').value,
+  const isEdit = !!_movEditId;
+  const orig = isEdit ? (proyectoData.movimientos||[]).find(x=>String(x.id)===String(_movEditId)) : null;
+  const item={
+    id: isEdit ? _movEditId : rnd(),
+    tipo:document.getElementById('m-tipo').value,
     fecha:document.getElementById('m-fec').value||td(),
     partida:conc.partida, categoria:conc.categoria||'',
     conceptoId:conc.id,
-    monto,concepto:conc.concepto,proveedor:document.getElementById('m-pro').value.trim(),
+    monto,concepto:conc.concepto,
+    proveedor:document.getElementById('m-pro').value.trim(),
     ref:document.getElementById('m-ref').value.trim(),
     obs:document.getElementById('m-obs').value.trim(),
-    creadoPor:currentProfile.nombre||currentUser.email};
+    creadoPor: isEdit ? (orig?.creadoPor||currentProfile.nombre||currentUser.email) : (currentProfile.nombre||currentUser.email),
+    editadoPor: isEdit ? (currentProfile.nombre||currentUser.email) : undefined,
+  };
+  _movEditId = null;
+  // Restaurar título modal
+  const mt=document.getElementById('m-modal-titulo');
+  if(mt) mt.textContent='Registrar movimiento';
   await saveItem('movimientos',item);
   closeModal('modal-mov');
   // Si venía de una solicitud, marcarla como convertida
@@ -2244,6 +2446,32 @@ async function guardarMov(){
 async function elimMov(id){
   if(!confirm('¿Eliminar?'))return;
   await deleteItem('movimientos',id);renderGastos();
+}
+
+let _movEditId = null;
+
+function editarMov(id){
+  const m=(proyectoData.movimientos||[]).find(x=>String(x.id)===String(id));
+  if(!m) return;
+  _movEditId = id;
+  // Poblar categorías y seleccionar
+  const cats=getCats();
+  document.getElementById('m-cat').innerHTML='<option value="">-- Categoría --</option>'+optsCat();
+  document.getElementById('m-cat').value=m.categoria||'';
+  onMovCat();
+  setTimeout(()=>{
+    if(m.conceptoId) document.getElementById('m-conc-sel').value=m.conceptoId;
+    document.getElementById('m-tipo').value=m.tipo||'gasto';
+    document.getElementById('m-fec').value=m.fecha||td();
+    document.getElementById('m-mon').value=m.monto||'';
+    document.getElementById('m-pro').value=m.proveedor||'';
+    document.getElementById('m-ref').value=m.ref||'';
+    document.getElementById('m-obs').value=m.obs||'';
+  },40);
+  // Cambiar título del modal
+  const mt=document.getElementById('m-modal-titulo');
+  if(mt) mt.textContent='Editar movimiento';
+  document.getElementById('modal-mov').classList.add('open');
 }
 
 // ============================================================
@@ -3177,14 +3405,15 @@ function renderPrograma(){
         if(!sem.cerrada && parts.length){
           const avances=parts.map(p=>({prog:parseFloat(p.pct_prog)||100,real:getAv(p.partida)}));
           const conAvance=avances.filter(a=>a.real>0);
-          if(conAvance.length){
-            const avgCum=Math.round(conAvance.reduce((s,a)=>s+Math.min(a.real/a.prog*100,200),0)/conAvance.length);
+          if(avances.length){
+            // Todas las partidas: las sin avance cuentan 0%
+            const avgCum=Math.round(avances.reduce((s,a)=>s+(a.real/a.prog*100),0)/avances.length);
             const cumCol=avgCum>=100?'var(--gn)':avgCum>=70?'var(--am)':'var(--rd)';
             return`<div style="margin-top:10px;border-top:0.5px solid var(--bo);padding-top:10px;display:flex;gap:10px;flex-wrap:wrap">
               <div style="background:var(--sur2);padding:8px 16px;border-radius:8px;text-align:center">
                 <div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px">Cumplimiento promedio</div>
                 <div style="font-size:20px;font-weight:700;color:${cumCol}">${avgCum}%</div>
-                <div style="font-size:10px;color:var(--tx3)">${conAvance.length} de ${parts.length} partidas con avance</div>
+                <div style="font-size:10px;color:var(--tx3)">${conAvance.length} de ${parts.length} con avance registrado</div>
               </div>
               <div style="background:var(--sur2);padding:8px 16px;border-radius:8px;text-align:center;flex:1;min-width:100px">
                 <div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px">Estado</div>
@@ -4348,15 +4577,16 @@ function imprimirPrograma(){
     } else {
       // Resumen en tiempo real
       const conAvance=parts.filter(p=>getAv(p.partida)>0);
-      if(conAvance.length){
-        const avgCum=Math.round(conAvance.reduce((s,p)=>{
-          const pp=parseFloat(p.pct_prog)||100, pr=getAv(p.partida);
-          return s+Math.min(pr/pp*100,200);
-        },0)/conAvance.length);
+      if(parts.length){
+        // Todas las partidas: las sin avance cuentan 0%
+        const avgCum=Math.round(parts.reduce((s,p)=>{
+          const pp=parseFloat(p.pct_prog)||100, pr=getAv(p.partida)||0;
+          return s+(pr/pp*100);
+        },0)/parts.length);
         const cumC=avgCum>=100?'#2e6b47':avgCum>=70?'#8a6010':'#b52e2e';
         resumenHTML=`<div class="resumen">
           <div class="res-box"><div class="res-num" style="color:${cumC}">${avgCum}%</div><div class="res-lbl">Cumplimiento promedio</div></div>
-          <div class="res-box"><div class="res-num">${conAvance.length}/${parts.length}</div><div class="res-lbl">Partidas con avance</div></div>
+          <div class="res-box"><div class="res-num">${conAvance.length}/${parts.length}</div><div class="res-lbl">Con avance registrado</div></div>
           <div class="res-box" style="flex:2"><div style="font-size:12px;font-weight:600;color:${cumC};margin-top:8px">${avgCum>=100?'✅ En tiempo':avgCum>=70?'⚠️ Con rezago':'❌ Retrasado'}</div><div class="res-lbl">Estado general</div></div>
         </div>`;
       }
@@ -4769,6 +4999,8 @@ function selMatDesdeSelector(matId){
 function openModal(id){
   if(id==='modal-mov'){
     const cats=getCats();if(!cats.length){showToast('Primero agrega conceptos al catálogo','err');return;}
+    _movEditId = null;
+    const mt=document.getElementById('m-modal-titulo');if(mt) mt.textContent='Registrar movimiento';
     document.getElementById('m-cat').innerHTML='<option value="">-- Categoría --</option>'+optsCat();
     document.getElementById('m-conc-sel').innerHTML='<option value="">-- Selecciona categoría primero --</option>';
     document.getElementById('m-fec').value=td();
@@ -4986,7 +5218,9 @@ Object.assign(window,{
   nuevoPerfil,editarPerfil,guardarPerfil,eliminarPerfil,setPerm,renderPerfiles,updUsrPerfilSel,
   nuevoUsuario,editarUsuario,guardarUsuario,toggleUsuario,abrirProyectoAdmin,abrirProyecto,
   volverSelector,showPage,openModal,closeModal,loadAdminDashboard,
-  guardarConc,elimConc,guardarMov,elimMov,onMovCat,onRecCat,onCorteCat,onCorteConc,onSemCat,onSemConc,
+  guardarConc,elimConc,guardarMov,elimMov,editarMov,onMovCat,
+  openCatFotos,closeCatFotos,onCatGal,guardarCatFotos,renderCatFotosPend,
+  openCatLB,closeCatLB,catLBNav,elimCatFoto,onRecCat,onCorteCat,onCorteConc,onSemCat,onSemConc,
   renderGastos,onFilCat,limpiarFiltrosGastos,
   openModalCorte,updCorteInfo,updCortePrev,cerrarCorte,guardarCorte,elimC,
   openAddFoto,cerrarAddFoto,guardarAddFotos,delFC,togC,
