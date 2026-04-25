@@ -793,7 +793,7 @@ tbody tr:hover td{background:var(--sur2);}
       <div class="fg"><label>Tipo *</label><select id="m-tipo"><option value="gasto">💸 Gasto</option><option value="ingreso">💵 Ingreso</option></select></div>
       <div class="fg"><label>Fecha *</label><input id="m-fec" type="date"></div>
       <div class="fg"><label>Categoría *</label><select id="m-cat" onchange="onMovCat()"><option value="">-- Categoría --</option></select></div>
-      <div class="fg"><label>Concepto *</label><select id="m-conc-sel"><option value="">-- Selecciona categoría primero --</option></select></div>
+      <div class="fg fc2"><label>Concepto *</label><select id="m-conc-sel" style="white-space:normal;overflow:hidden;text-overflow:ellipsis"><option value="">-- Selecciona categoría primero --</option></select></div>
       <div class="fg fc2"><label>Monto ($) *</label><input id="m-mon" type="number" min="0" step="any" placeholder="0.00"></div>
       <div class="fg"><label>Proveedor</label><input id="m-pro" type="text"></div>
       <div class="fg"><label>Referencia / Factura</label><input id="m-ref" type="text"></div>
@@ -1907,7 +1907,10 @@ function esUnidadContable(uni){ return UNIDADES_CONTABLES.includes((uni||'').toL
 // Generar options de categoría para selects
 function optsCat(selVal){ return getCats().map(c=>`<option value="${c}" ${c===selVal?'selected':''}>${c}</option>`).join(''); }
 // Generar options de conceptos de una categoría
-function optsConc(cat,selVal){ return getConceptosCat(cat).map(c=>`<option value="${c.id}" ${String(c.id)===String(selVal)?'selected':''}>${c.concepto} (${c.unidad})</option>`).join(''); }
+function optsConc(cat,selVal){ return getConceptosCat(cat).map(c=>{
+  const desc=`${c.partida||''} · ${c.concepto}`;
+  return `<option value="${c.id}" ${String(c.id)===String(selVal)?'selected':''}>${desc}</option>`;
+}).join(''); }
 // Avance por concepto (cortes indexados por conceptoId)
 function getCortesConc(concId){ return (proyectoData.cortes||[]).filter(c=>String(c.conceptoId)===String(concId)).sort((a,b)=>a.fecha.localeCompare(b.fecha)); }
 function getAvConc(concId){ const cs=getCortesConc(concId); return cs.length?cs[cs.length-1].pctAcum:0; }
