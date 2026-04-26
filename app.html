@@ -771,14 +771,20 @@ tbody tr:hover td{background:var(--sur2);}
 
 <!-- Concepto -->
 <div class="modal-bg" id="modal-conc">
-  <div class="modal"><div class="mh"><div class="mt">Nuevo concepto</div><button class="mc" onclick="closeModal('modal-conc')">✕</button></div>
+  <div class="modal"><div class="mh"><div class="mt" id="conc-modal-titulo">Nuevo concepto</div><button class="mc" onclick="closeModal('modal-conc')">✕</button></div>
     <div class="fgrid">
       <div class="fg fc2"><label>Partida *</label><input id="c-part" type="text" list="part-dl"><datalist id="part-dl"></datalist></div>
       <div class="fg fc2"><label>Concepto *</label><input id="c-conc" type="text" placeholder="Descripción del trabajo"></div>
-      <div class="fg"><label>Unidad</label><select id="c-uni"><option>m³</option><option>m²</option><option>ml</option><option>kg</option><option>ton</option><option>pieza</option><option>lote</option><option>hr</option><option>jornada</option></select></div>
+      <div class="fg"><label>Unidad</label>
+        <input id="c-uni" type="text" list="c-uni-dl" placeholder="m², kg, pza...">
+        <datalist id="c-uni-dl"><option value="m²"><option value="m³"><option value="ml"><option value="kg"><option value="ton"><option value="pieza"><option value="pza"><option value="lote"><option value="hr"><option value="jornada"><option value="saco"><option value="M2"><option value="M3"></datalist>
+      </div>
       <div class="fg"><label>Cantidad</label><input id="c-cant" type="number" min="0" step="any" placeholder="0"></div>
       <div class="fg"><label>Precio unitario ($)</label><input id="c-pre" type="number" min="0" step="any" placeholder="0.00"></div>
-      <div class="fg"><label>Categoría</label><select id="c-cat"><option>Obra civil</option><option>Estructura</option><option>Instalaciones</option><option>Acabados</option><option>Equipamiento</option><option>Administración</option><option>Otro</option></select></div>
+      <div class="fg"><label>Categoría</label>
+        <input id="c-cat" type="text" list="c-cat-dl" placeholder="Escribe o selecciona...">
+        <datalist id="c-cat-dl"><option value="Obra civil"><option value="Estructura"><option value="Instalaciones"><option value="Acabados"><option value="Equipamiento"><option value="Administración"><option value="Otro"></datalist>
+      </div>
       <div class="fg fc2"><label>Notas</label><input id="c-not" type="text" placeholder="Especificaciones"></div>
     </div>
     <div style="margin-top:10px;padding:9px;background:var(--sur2);border-radius:8px;font-size:13px">Total: <strong id="c-tot">$0</strong></div>
@@ -2194,27 +2200,140 @@ function renderCat(){
         </td>
         <td><span class="badge bb">${i.categoria}</span></td>
         <td>${i.unidad}</td>
-        <td>${fmtN(i.cantidad)}</td>
-        <td>${fmt(precioNeto(i.precio))}</td>
-        <td style="font-weight:600">${fmt(i.cantidad*precioNeto(i.precio))}</td>
+        <td>
+          <span id="cat-vs-cant-${i.id}">${fmtN(i.cantidad)}</span>
+          <input id="cat-ei-cant-${i.id}" type="number" min="0" step="any" value="${i.cantidad}"
+            style="display:none;width:80px;padding:4px 7px;border:1.5px solid var(--ac);border-radius:6px;font-size:13px;font-family:var(--ff)"
+            onblur="guardarConcInline('${i.id}')">
+        </td>
+        <td>
+          <span id="cat-vs-pre-${i.id}">${fmt(precioNeto(i.precio))}</span>
+          <input id="cat-ei-pre-${i.id}" type="number" min="0" step="any" value="${i.precio}"
+            style="display:none;width:100px;padding:4px 7px;border:1.5px solid var(--ac);border-radius:6px;font-size:13px;font-family:var(--ff)"
+            onblur="guardarConcInline('${i.id}')">
+        </td>
+        <td style="font-weight:600" id="cat-vs-tot-${i.id}">${fmt(i.cantidad*precioNeto(i.precio))}</td>
         ${esGerencia()?`<td style="white-space:nowrap">
-          <button class="btn btn-sm" onclick="openCatFotos('${i.id}')" title="Fotos del área">📷${fotos.length?` <span style="font-size:10px">${fotos.length}</span>`:''}</button>
-          <button class="btn btn-sm btn-d" onclick="elimConc('${i.id}')" style="margin-left:3px">✕</button>
+          <button class="btn btn-sm" onclick="openCatFotos('${i.id}')" title="Fotos">📷${fotos.length?` <span style="font-size:10px">${fotos.length}</span>`:''}</button>
+          <button class="btn btn-sm" id="cat-vs-btn-${i.id}" onclick="toggleConcInline('${i.id}')" style="margin:0 3px" title="Editar">✏️</button>
+          <button class="btn btn-sm btn-d" onclick="elimConc('${i.id}')">✕</button>
         </td>`:''}
       </tr>`;
     }).join('')}</tbody></table></div></div>`;
   }).join('');
 }
 
+let _concEditId = null;
+let _concInlineActive = null;
+
+function toggleConcInline(id){
+  if(_concInlineActive && _concInlineActive!==id) cerrarConcInline(_concInlineActive);
+  _concInlineActive = id;
+  // Mostrar/ocultar usando getElementById (evita problemas con puntos en IDs como selector CSS)
+  const vsCant=document.getElementById('cat-vs-cant-'+id);
+  const vsPre=document.getElementById('cat-vs-pre-'+id);
+  const eiCant=document.getElementById('cat-ei-cant-'+id);
+  const eiPre=document.getElementById('cat-ei-pre-'+id);
+  const btn=document.getElementById('cat-vs-btn-'+id);
+  if(vsCant) vsCant.style.display='none';
+  if(vsPre)  vsPre.style.display='none';
+  if(eiCant){ eiCant.style.display='inline-block'; eiCant.focus(); }
+  if(eiPre)  eiPre.style.display='inline-block';
+  if(btn){ btn.textContent='💾'; btn.title='Guardar'; btn.onclick=()=>guardarConcInline(id); }
+}
+
+function cerrarConcInline(id){
+  _concInlineActive=null;
+  const vsCant=document.getElementById('cat-vs-cant-'+id);
+  const vsPre=document.getElementById('cat-vs-pre-'+id);
+  const eiCant=document.getElementById('cat-ei-cant-'+id);
+  const eiPre=document.getElementById('cat-ei-pre-'+id);
+  const btn=document.getElementById('cat-vs-btn-'+id);
+  if(vsCant) vsCant.style.display='';
+  if(vsPre)  vsPre.style.display='';
+  if(eiCant) eiCant.style.display='none';
+  if(eiPre)  eiPre.style.display='none';
+  if(btn){ btn.textContent='✏️'; btn.title='Editar'; btn.onclick=()=>toggleConcInline(id); }
+}
+
+async function guardarConcInline(id){
+  if(_concInlineActive!==id) return; // evitar doble guardado por onblur
+  const conc=(proyectoData.conceptos||[]).find(x=>String(x.id)===String(id));
+  if(!conc) return;
+  const eiCant=document.getElementById('cat-ei-cant-'+id);
+  const eiPre=document.getElementById('cat-ei-pre-'+id);
+  const nuevaCant=parseFloat(eiCant?.value)||0;
+  const nuevaPre=parseFloat(eiPre?.value)||0;
+  // Solo guardar si cambiaron los valores
+  if(nuevaCant===conc.cantidad && nuevaPre===conc.precio){ cerrarConcInline(id); return; }
+  conc.cantidad=nuevaCant;
+  conc.precio=nuevaPre;
+  await saveItem('conceptos', conc);
+  cerrarConcInline(id);
+  // Actualizar celdas sin re-renderizar
+  const vsCant=document.getElementById('cat-vs-cant-'+id);
+  const vsPre=document.getElementById('cat-vs-pre-'+id);
+  const vsTot=document.getElementById('cat-vs-tot-'+id);
+  if(vsCant) vsCant.textContent=fmtN(conc.cantidad);
+  if(vsPre)  vsPre.textContent=fmt(precioNeto(conc.precio));
+  if(vsTot)  vsTot.textContent=fmt(conc.cantidad*precioNeto(conc.precio));
+  showToast('✅ '+conc.partida+' actualizada');
+}
+
+function editarConc(id){
+  const conc=(proyectoData.conceptos||[]).find(x=>String(x.id)===String(id));
+  if(!conc) return;
+  _concEditId = id;
+  // Actualizar datalist de partidas con las existentes
+  const dl=document.getElementById('part-dl');
+  if(dl) dl.innerHTML=[...new Set((proyectoData.conceptos||[]).map(x=>x.partida))].map(p=>`<option value="${p}">`).join('');
+  // Actualizar datalist de categorías con las existentes en el proyecto
+  const catDl=document.getElementById('c-cat-dl');
+  if(catDl){
+    const catsExist=[...new Set((proyectoData.conceptos||[]).map(x=>x.categoria).filter(Boolean))];
+    catDl.innerHTML=['Obra civil','Estructura','Instalaciones','Acabados','Equipamiento','Administración','Otro',...catsExist]
+      .filter((v,i,a)=>a.indexOf(v)===i).map(c=>`<option value="${c}">`).join('');
+  }
+  // Poblar campos DESPUÉS de que el modal esté abierto
+  document.getElementById('c-part').value = conc.partida||'';
+  document.getElementById('c-conc').value = conc.concepto||'';
+  document.getElementById('c-cant').value = conc.cantidad||'';
+  document.getElementById('c-pre').value  = conc.precio||'';
+  document.getElementById('c-not').value  = conc.notas||'';
+  // Unidad y categoría (inputs libres, cualquier valor funciona)
+  document.getElementById('c-uni').value  = conc.unidad||'';
+  document.getElementById('c-cat').value  = conc.categoria||'';
+  // Actualizar total
+  const tot=document.getElementById('c-tot');
+  if(tot) tot.textContent=fmt((conc.cantidad||0)*(conc.precio||0));
+  // Título
+  const titulo=document.getElementById('conc-modal-titulo');
+  if(titulo) titulo.textContent='Editar — '+conc.partida;
+  openModal('modal-conc');
+}
+
 async function guardarConc(){
   const p=document.getElementById('c-part').value.trim(), c=document.getElementById('c-conc').value.trim();
   if(!p||!c){showToast('Completa partida y concepto','err');return;}
-  const item={id:rnd(),partida:p,concepto:c,unidad:document.getElementById('c-uni').value,
+  const isEdit=!!_concEditId;
+  const orig=isEdit?(proyectoData.conceptos||[]).find(x=>String(x.id)===String(_concEditId)):null;
+  const item={
+    id: isEdit ? _concEditId : rnd(),
+    partida:p, concepto:c,
+    unidad:document.getElementById('c-uni').value,
     cantidad:parseFloat(document.getElementById('c-cant').value)||0,
     precio:parseFloat(document.getElementById('c-pre').value)||0,
-    categoria:document.getElementById('c-cat').value,notas:document.getElementById('c-not').value.trim()};
+    categoria:document.getElementById('c-cat').value,
+    notas:document.getElementById('c-not').value.trim(),
+    // conservar fotos si es edición
+    fotos: isEdit ? (orig?.fotos||[]) : [],
+  };
   await saveItem('conceptos',item);
-  closeModal('modal-conc');renderCat();showToast('Concepto agregado');
+  _concEditId=null;
+  const titulo=document.getElementById('conc-modal-titulo');
+  if(titulo) titulo.textContent='Nuevo concepto';
+  closeModal('modal-conc');renderCat();
+  showToast(isEdit?'Concepto actualizado':'Concepto agregado');
 }
 
 async function elimConc(id){
@@ -5010,6 +5129,21 @@ function openModal(id){
     ['m-pro','m-ref','m-obs','m-mon'].forEach(x=>document.getElementById(x).value='');
   }
   if(id==='modal-conc'){
+    _concEditId=null;
+    const titulo=document.getElementById('conc-modal-titulo');
+    if(titulo) titulo.textContent='Nuevo concepto';
+    // Limpiar campos
+    ['c-part','c-conc','c-uni','c-cant','c-pre','c-cat','c-not'].forEach(id=>{
+      const el=document.getElementById(id); if(el) el.value='';
+    });
+    const tot=document.getElementById('c-tot');if(tot)tot.textContent='$0.00';
+    // Actualizar datalist categorías con las del proyecto
+    const catDl=document.getElementById('c-cat-dl');
+    if(catDl){
+      const catsExist=[...new Set((proyectoData.conceptos||[]).map(x=>x.categoria).filter(Boolean))];
+      catDl.innerHTML=['Obra civil','Estructura','Instalaciones','Acabados','Equipamiento','Administración','Otro',...catsExist]
+        .filter((v,i,a)=>a.indexOf(v)===i).map(c=>`<option value="${c}">`).join('');
+    }
     ['c-part','c-conc','c-cant','c-pre','c-not'].forEach(x=>document.getElementById(x).value='');
     document.getElementById('c-tot').textContent='$0';
     document.getElementById('part-dl').innerHTML=getPs().map(p=>`<option value="${p}">`).join('');
@@ -5221,7 +5355,7 @@ Object.assign(window,{
   nuevoPerfil,editarPerfil,guardarPerfil,eliminarPerfil,setPerm,renderPerfiles,updUsrPerfilSel,
   nuevoUsuario,editarUsuario,guardarUsuario,toggleUsuario,abrirProyectoAdmin,abrirProyecto,
   volverSelector,showPage,openModal,closeModal,loadAdminDashboard,
-  guardarConc,elimConc,guardarMov,elimMov,editarMov,onMovCat,
+  guardarConc,editarConc,elimConc,toggleConcInline,cerrarConcInline,guardarConcInline,guardarMov,elimMov,editarMov,onMovCat,
   openCatFotos,closeCatFotos,onCatGal,guardarCatFotos,renderCatFotosPend,
   openCatLB,closeCatLB,catLBNav,elimCatFoto,onRecCat,onCorteCat,onCorteConc,onSemCat,onSemConc,
   renderGastos,onFilCat,limpiarFiltrosGastos,
