@@ -2146,10 +2146,12 @@ function renderCat(){
   // Botones del catálogo según rol — siempre se renderizan, sin importar si hay conceptos
   const catBtns = document.getElementById('cat-botones');
   if(catBtns){
-    catBtns.innerHTML = esGerencia()
+    catBtns.innerHTML =
+      `<button class="btn" onclick="imprimirCatalogo()">🖨 Imprimir</button>` +
+      (esGerencia()
       ? `<button class="btn" onclick="document.getElementById('xlsx-inp').click()">📂 Importar Excel</button>
          <button class="btn btn-p" onclick="openModal('modal-conc')">+ Nuevo concepto</button>`
-      : '';
+      : '');
   }
   const dashBitBtn = document.getElementById('dash-bit-btn');
   if(dashBitBtn){
@@ -2191,26 +2193,45 @@ function renderCat(){
       const fotos=i.fotos||[];
       return`<tr>
         <td>
-          <div>${i.concepto}</div>
+          <span id="cat-vs-conc-${i.id}">${i.concepto}</span>
+          <textarea id="cat-ei-conc-${i.id}"
+            style="display:none;width:100%;padding:4px 7px;border:1.5px solid var(--ac);border-radius:6px;font-size:12px;font-family:var(--ff);resize:vertical;min-height:60px"
+            onblur="schedGuardarConcInline('${i.id}',event)"
+            onkeydown="if(event.key==='Escape')cerrarConcInline('${i.id}')"
+            >${i.concepto}</textarea>
           ${fotos.length?`<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px">
             ${fotos.slice(0,4).map((f,fi)=>`<img src="${f.url}" onclick="openCatLB('${i.id}',${fi})"
               style="width:40px;height:40px;object-fit:cover;border-radius:5px;cursor:pointer;border:1px solid var(--bo)">`).join('')}
             ${fotos.length>4?`<div style="width:40px;height:40px;background:var(--sur2);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--tx3);cursor:pointer;border:1px solid var(--bo)" onclick="openCatLB('${i.id}',0)">+${fotos.length-4}</div>`:''}
           </div>`:''}
         </td>
-        <td><span class="badge bb">${i.categoria}</span></td>
-        <td>${i.unidad}</td>
+        <td>
+          <span id="cat-vs-cat-${i.id}"><span class="badge bb">${i.categoria}</span></span>
+          <input id="cat-ei-cat-${i.id}" type="text" list="c-cat-dl" value="${i.categoria}"
+            style="display:none;width:120px;padding:4px 7px;border:1.5px solid var(--ac);border-radius:6px;font-size:12px;font-family:var(--ff)"
+            onblur="schedGuardarConcInline('${i.id}',event)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('cat-ei-cant-${i.id}').focus();}if(event.key==='Escape')cerrarConcInline('${i.id}')">
+        </td>
+        <td>
+          <span id="cat-vs-uni-${i.id}">${i.unidad}</span>
+          <input id="cat-ei-uni-${i.id}" type="text" list="c-uni-dl" value="${i.unidad}"
+            style="display:none;width:70px;padding:4px 7px;border:1.5px solid var(--ac);border-radius:6px;font-size:12px;font-family:var(--ff)"
+            onblur="schedGuardarConcInline('${i.id}',event)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('cat-ei-cant-${i.id}').focus();}if(event.key==='Escape')cerrarConcInline('${i.id}')">
+        </td>
         <td>
           <span id="cat-vs-cant-${i.id}">${fmtN(i.cantidad)}</span>
           <input id="cat-ei-cant-${i.id}" type="number" min="0" step="any" value="${i.cantidad}"
             style="display:none;width:80px;padding:4px 7px;border:1.5px solid var(--ac);border-radius:6px;font-size:13px;font-family:var(--ff)"
-            onblur="guardarConcInline('${i.id}')">
+            onblur="schedGuardarConcInline('${i.id}',event)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('cat-ei-pre-${i.id}').focus();}if(event.key==='Escape')cerrarConcInline('${i.id}')">
         </td>
         <td>
           <span id="cat-vs-pre-${i.id}">${fmt(precioNeto(i.precio))}</span>
           <input id="cat-ei-pre-${i.id}" type="number" min="0" step="any" value="${i.precio}"
             style="display:none;width:100px;padding:4px 7px;border:1.5px solid var(--ac);border-radius:6px;font-size:13px;font-family:var(--ff)"
-            onblur="guardarConcInline('${i.id}')">
+            onblur="schedGuardarConcInline('${i.id}',event)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();guardarConcInline('${i.id}');}if(event.key==='Escape')cerrarConcInline('${i.id}')">
         </td>
         <td style="font-weight:600" id="cat-vs-tot-${i.id}">${fmt(i.cantidad*precioNeto(i.precio))}</td>
         ${esGerencia()?`<td style="white-space:nowrap">
@@ -2226,18 +2247,48 @@ function renderCat(){
 let _concEditId = null;
 let _concInlineActive = null;
 
+let _concInlineSaveTimer = null;
+
+function schedGuardarConcInline(id, e){
+  // Verificar si el foco se va a otro input del MISMO concepto
+  clearTimeout(_concInlineSaveTimer);
+  _concInlineSaveTimer = setTimeout(()=>{
+    // Comprobar si el foco está en otro input del mismo concepto
+    const active = document.activeElement;
+    const cantInp = document.getElementById('cat-ei-cant-'+id);
+    const preInp  = document.getElementById('cat-ei-pre-'+id);
+    const concInp = document.getElementById('cat-ei-conc-'+id);
+    const catInp  = document.getElementById('cat-ei-cat-'+id);
+    const uniInp  = document.getElementById('cat-ei-uni-'+id);
+    if(active===cantInp||active===preInp||active===concInp||active===catInp||active===uniInp) return;
+    guardarConcInline(id);
+  }, 150);
+}
+
 function toggleConcInline(id){
   if(_concInlineActive && _concInlineActive!==id) cerrarConcInline(_concInlineActive);
   _concInlineActive = id;
   // Mostrar/ocultar usando getElementById (evita problemas con puntos en IDs como selector CSS)
   const vsCant=document.getElementById('cat-vs-cant-'+id);
   const vsPre=document.getElementById('cat-vs-pre-'+id);
+  const vsConc=document.getElementById('cat-vs-conc-'+id);
+  const vsCat=document.getElementById('cat-vs-cat-'+id);
   const eiCant=document.getElementById('cat-ei-cant-'+id);
   const eiPre=document.getElementById('cat-ei-pre-'+id);
+  const eiConc=document.getElementById('cat-ei-conc-'+id);
+  const eiCat=document.getElementById('cat-ei-cat-'+id);
   const btn=document.getElementById('cat-vs-btn-'+id);
   if(vsCant) vsCant.style.display='none';
   if(vsPre)  vsPre.style.display='none';
-  if(eiCant){ eiCant.style.display='inline-block'; eiCant.focus(); }
+  const vsUni=document.getElementById('cat-vs-uni-'+id);
+  const eiUni=document.getElementById('cat-ei-uni-'+id);
+  if(vsConc) vsConc.style.display='none';
+  if(vsCat)  vsCat.style.display='none';
+  if(vsUni)  vsUni.style.display='none';
+  if(eiConc){ eiConc.style.display='block'; eiConc.focus(); }
+  if(eiCat)  eiCat.style.display='inline-block';
+  if(eiUni)  eiUni.style.display='inline-block';
+  if(eiCant){ eiCant.style.display='inline-block'; }
   if(eiPre)  eiPre.style.display='inline-block';
   if(btn){ btn.textContent='💾'; btn.title='Guardar'; btn.onclick=()=>guardarConcInline(id); }
 }
@@ -2246,13 +2297,25 @@ function cerrarConcInline(id){
   _concInlineActive=null;
   const vsCant=document.getElementById('cat-vs-cant-'+id);
   const vsPre=document.getElementById('cat-vs-pre-'+id);
+  const vsConc=document.getElementById('cat-vs-conc-'+id);
+  const vsCat=document.getElementById('cat-vs-cat-'+id);
   const eiCant=document.getElementById('cat-ei-cant-'+id);
   const eiPre=document.getElementById('cat-ei-pre-'+id);
+  const eiConc=document.getElementById('cat-ei-conc-'+id);
+  const eiCat=document.getElementById('cat-ei-cat-'+id);
   const btn=document.getElementById('cat-vs-btn-'+id);
   if(vsCant) vsCant.style.display='';
   if(vsPre)  vsPre.style.display='';
+  if(vsConc) vsConc.style.display='';
+  if(vsCat)  vsCat.style.display='';
+  const vsUni2=document.getElementById('cat-vs-uni-'+id);
+  const eiUni2=document.getElementById('cat-ei-uni-'+id);
+  if(vsUni2) vsUni2.style.display='';
+  if(eiUni2) eiUni2.style.display='none';
   if(eiCant) eiCant.style.display='none';
   if(eiPre)  eiPre.style.display='none';
+  if(eiConc) eiConc.style.display='none';
+  if(eiCat)  eiCat.style.display='none';
   if(btn){ btn.textContent='✏️'; btn.title='Editar'; btn.onclick=()=>toggleConcInline(id); }
 }
 
@@ -2262,21 +2325,34 @@ async function guardarConcInline(id){
   if(!conc) return;
   const eiCant=document.getElementById('cat-ei-cant-'+id);
   const eiPre=document.getElementById('cat-ei-pre-'+id);
+  const eiConc=document.getElementById('cat-ei-conc-'+id);
+  const eiCat=document.getElementById('cat-ei-cat-'+id);
   const nuevaCant=parseFloat(eiCant?.value)||0;
   const nuevaPre=parseFloat(eiPre?.value)||0;
-  // Solo guardar si cambiaron los valores
-  if(nuevaCant===conc.cantidad && nuevaPre===conc.precio){ cerrarConcInline(id); return; }
+  const nuevaConc=(eiConc?.value||'').trim();
+  const nuevaCat=(eiCat?.value||'').trim();
+  const eiUni3=document.getElementById('cat-ei-uni-'+id);
+  const nuevaUni=(eiUni3?.value||'').trim();
   conc.cantidad=nuevaCant;
   conc.precio=nuevaPre;
+  if(nuevaConc) conc.concepto=nuevaConc;
+  if(nuevaCat)  conc.categoria=nuevaCat;
+  if(nuevaUni)  conc.unidad=nuevaUni;
   await saveItem('conceptos', conc);
   cerrarConcInline(id);
   // Actualizar celdas sin re-renderizar
   const vsCant=document.getElementById('cat-vs-cant-'+id);
   const vsPre=document.getElementById('cat-vs-pre-'+id);
   const vsTot=document.getElementById('cat-vs-tot-'+id);
+  const vsConc=document.getElementById('cat-vs-conc-'+id);
+  const vsCat=document.getElementById('cat-vs-cat-'+id);
   if(vsCant) vsCant.textContent=fmtN(conc.cantidad);
   if(vsPre)  vsPre.textContent=fmt(precioNeto(conc.precio));
   if(vsTot)  vsTot.textContent=fmt(conc.cantidad*precioNeto(conc.precio));
+  if(vsConc) vsConc.textContent=conc.concepto;
+  if(vsCat)  vsCat.innerHTML=`<span class="badge bb">${conc.categoria}</span>`;
+  const vsUni4=document.getElementById('cat-vs-uni-'+id);
+  if(vsUni4) vsUni4.textContent=conc.unidad;
   showToast('✅ '+conc.partida+' actualizada');
 }
 
@@ -2603,7 +2679,9 @@ const SCOL=['#b87333','#2e6b47','#1a4d8b','#8a6010','#b52e2e','#6b2e8b','#2e6b8b
 
 function renderAv(){
   const avAddBtn = document.getElementById('av-add-btn');
-  if(avAddBtn) avAddBtn.innerHTML = esResidente() ? `<button class="btn btn-p" onclick="openModalCorte()">+ Nuevo corte</button>` : '';
+  if(avAddBtn) avAddBtn.innerHTML =
+    `<button class="btn" onclick="imprimirAvance()">🖨 Imprimir</button>` +
+    (esResidente() ? `<button class="btn btn-p" onclick="openModalCorte()" style="margin-left:6px">+ Nuevo corte</button>` : '');
   const concs=proyectoData.conceptos||[];
   if(!concs.length){document.getElementById('avance-lista').innerHTML='<div class="empty"><div class="ei">📐</div><p>Sin conceptos en el catálogo</p></div>';return;}
   // Agrupar por partida > categoría > concepto
@@ -3817,6 +3895,190 @@ function renderRepCharts(ps,gr,gp){
 // ============================================================
 // XLSX IMPORT
 // ============================================================
+function imprimirAvance(){
+  const conceptos=proyectoData.conceptos||[];
+  const cortes=proyectoData.cortes||[];
+  if(!conceptos.length){showToast('Sin catálogo para imprimir','err');return;}
+  const proyecto=currentProyecto?.nombre||'';
+  const empresa=currentProyecto?.empresa||'';
+  const fechaImp=new Date().toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'});
+
+  // Agrupar por partida
+  const gr={};
+  conceptos.forEach(c=>{if(!gr[c.partida])gr[c.partida]=[];gr[c.partida].push(c);});
+
+  function _getAvP(concId){
+    const cs=cortes.filter(c=>String(c.conceptoId)===String(concId));
+    return cs.length ? cs[cs.length-1].pctAcum||0 : 0;
+  }
+  const avColor=p=>p>=100?'#2e6b47':p>=60?'#8a6010':'#b52e2e';
+  const avBg=p=>p>=100?'#e4f2ea':p>=60?'#faf0d8':'#fbeaea';
+
+  const avGlobal=conceptos.length?Math.round(conceptos.reduce((s,c)=>s+_getAvP(c.id),0)/conceptos.length):0;
+  const partidas=Object.entries(gr).sort(([a],[b])=>a.localeCompare(b));
+
+  const filasHTML=partidas.map(([gn,items])=>{
+    const cats=[...new Set(items.map(i=>i.categoria||''))].filter(Boolean);
+    const avPart=items.length?Math.round(items.reduce((s,i)=>s+_getAvP(i.id),0)/items.length):0;
+    const col=avColor(avPart);
+    const bg=avBg(avPart);
+    // Obtener descripcion/concepto de los items de esta partida
+    const concDescs=items.map(i=>i.concepto).filter(Boolean);
+    return`<tr>
+      <td style="font-weight:700;font-size:13px;padding:10px 12px;width:100px;vertical-align:top">${gn}</td>
+      <td style="font-size:11px;padding:10px 12px;vertical-align:top">
+        ${cats.length?`<div style="color:#b87333;font-weight:600;font-size:10px;margin-bottom:3px">📁 ${cats.join(' · ')}</div>`:''}
+        ${concDescs.map(d=>`<div style="color:#1c1a17;font-size:11px;line-height:1.4">${d}</div>`).join('')}
+      </td>
+      <td style="padding:10px 12px;width:160px;vertical-align:top">
+        <div style="position:relative;height:12px;background:#ede9e1;border-radius:6px;overflow:hidden">
+          <div style="position:absolute;left:0;top:0;height:100%;width:${Math.min(avPart,100)}%;background:${col};border-radius:6px"></div>
+        </div>
+      </td>
+      <td style="text-align:center;font-size:16px;font-weight:800;color:${col};padding:10px 12px;width:70px">${avPart}%</td>
+      <td style="text-align:center;padding:10px 12px;width:90px">
+        <span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;background:${bg};color:${col}">${avPart>=100?'✅ Completo':avPart>0?'🔄 En proceso':'⏳ Sin inicio'}</span>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+  <title>Avance · ${proyecto}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1c1a17;}
+    .wrap{padding:22px 28px;max-width:800px;margin:0 auto;}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #b87333;padding-bottom:12px;margin-bottom:18px}
+    .logo{font-size:20px;font-weight:700}.logo span{color:#b87333}
+    table{width:100%;border-collapse:collapse;}
+    tr{border-bottom:0.5px solid #ede9e1;}
+    tr:last-child{border-bottom:none;}
+    .footer{margin-top:18px;display:flex;justify-content:space-between;font-size:10px;color:#9a9890;border-top:0.5px solid #ddd;padding-top:8px}
+    @media print{.wrap{padding:14px 18px}}
+  </style></head>
+  <body><div class="wrap">
+    <div class="header">
+      <div>
+        <div class="logo">Mi<span>Obra</span> <span style="font-size:12px;color:#5c5a52;font-weight:400">· Avance de obra</span></div>
+        <div style="font-size:12px;color:#5c5a52;margin-top:3px">${proyecto}${empresa?' · '+empresa:''}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:28px;font-weight:800;color:${avColor(avGlobal)}">${avGlobal}%</div>
+        <div style="font-size:11px;color:#9a9890">Avance global</div>
+        <div style="font-size:11px;color:#5c5a52;margin-top:2px">${partidas.length} partidas</div>
+      </div>
+    </div>
+    <table><tbody>${filasHTML}</tbody></table>
+    <div class="footer">
+      <span>Generado el ${fechaImp}</span>
+      <span>${proyecto} · MiObra</span>
+    </div>
+  </div></body></html>`;
+
+  const win=window.open('','_blank','width=860,height=720');
+  win.document.write(html);
+  win.document.close();
+  win.onload=()=>{win.focus();win.print();};
+}
+function imprimirCatalogo(){
+  const conceptos=proyectoData.conceptos||[];
+  if(!conceptos.length){showToast('Sin conceptos para imprimir','err');return;}
+  const proyecto=currentProyecto?.nombre||'';
+  const empresa=currentProyecto?.empresa||'';
+  const fechaImp=new Date().toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'});
+  const margen=currentProyecto?.margen||0;
+  const fn=margen>0?n=>n*(1-margen/100):n=>n;
+  const mxFmt=n=>'$'+Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const nFmt=n=>Number(n||0)%1===0?Number(n||0).toLocaleString('es-MX'):Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  // Agrupar por partida
+  const gr={};
+  conceptos.forEach(c=>{if(!gr[c.partida])gr[c.partida]=[];gr[c.partida].push(c);});
+  const totalGlobal=conceptos.reduce((s,c)=>s+c.cantidad*fn(c.precio),0);
+
+  const estilos=`
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#1c1a17;}
+    .wrap{padding:18px 24px;max-width:900px;margin:0 auto;}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #b87333;padding-bottom:10px;margin-bottom:14px}
+    .logo{font-size:20px;font-weight:700;color:#1c1a17}.logo span{color:#b87333}
+    .partida-header{background:#f4f2ed;padding:8px 12px;margin-bottom:0;display:flex;justify-content:space-between;align-items:center;border-left:3px solid #b87333;margin-top:14px;border-radius:4px 4px 0 0}
+    .partida-titulo{font-size:13px;font-weight:700}
+    .partida-cat{font-size:10px;color:#b87333;margin-top:2px}
+    table{width:100%;border-collapse:collapse;}
+    th{background:#f9f7f4;padding:6px 8px;text-align:left;font-size:10px;font-weight:600;color:#5c5a52;border:0.5px solid #ddd}
+    td{padding:5px 8px;border:0.5px solid #ddd;vertical-align:top;font-size:11px}
+    .tr-total{background:#f4f2ed;font-weight:700}
+    .tr-global{background:#ede8df;font-weight:700;font-size:12px}
+    .footer{margin-top:16px;display:flex;justify-content:space-between;font-size:10px;color:#9a9890;border-top:0.5px solid #ddd;padding-top:8px}
+    @media print{.wrap{padding:12px 16px}}`;
+
+  const partidas=Object.entries(gr).sort(([a],[b])=>a.localeCompare(b));
+
+  const tablasHTML=partidas.map(([gn,items])=>{
+    const cats=[...new Set(items.map(i=>i.categoria||''))].filter(Boolean);
+    const subTotal=items.reduce((s,i)=>s+i.cantidad*fn(i.precio),0);
+    const filas=items.map((i,idx)=>`<tr>
+      <td style="color:#9a9890;text-align:center;width:30px">${idx+1}</td>
+      <td style="max-width:320px">${i.concepto}</td>
+      <td style="text-align:center;width:50px">${i.unidad}</td>
+      <td style="text-align:right;width:60px">${nFmt(i.cantidad)}</td>
+      <td style="text-align:right;width:80px">${mxFmt(fn(i.precio))}</td>
+      <td style="text-align:right;width:85px;font-weight:600">${mxFmt(i.cantidad*fn(i.precio))}</td>
+    </tr>`).join('');
+    return`<div class="partida-header">
+        <div>
+          <div class="partida-titulo">${gn}</div>
+          ${cats.length?`<div class="partida-cat">📁 ${cats.join(' · ')}</div>`:''}
+        </div>
+        <div style="font-size:12px;font-weight:700;color:#b87333">${mxFmt(subTotal)}</div>
+      </div>
+      <table>
+        <thead><tr><th>#</th><th>Concepto</th><th style="text-align:center">Unid.</th><th style="text-align:right">Cant.</th><th style="text-align:right">P.U.</th><th style="text-align:right">Total</th></tr></thead>
+        <tbody>
+          ${filas}
+          <tr class="tr-total">
+            <td colspan="5" style="text-align:right">Subtotal ${gn}</td>
+            <td style="text-align:right">${mxFmt(subTotal)}</td>
+          </tr>
+        </tbody>
+      </table>`;
+  }).join('');
+
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+  <title>Catálogo · ${proyecto}</title>
+  <style>${estilos}</style></head>
+  <body><div class="wrap">
+    <div class="header">
+      <div>
+        <div class="logo">Mi<span>Obra</span> <span style="font-size:12px;color:#5c5a52;font-weight:400">· Catálogo de conceptos</span></div>
+        <div style="font-size:12px;color:#5c5a52;margin-top:2px">${proyecto}${empresa?' · '+empresa:''}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:11px;color:#5c5a52">${conceptos.length} conceptos · ${Object.keys(gr).length} partidas</div>
+        <div style="font-size:18px;font-weight:700;color:#b87333;margin-top:4px">${mxFmt(totalGlobal)}</div>
+        <div style="font-size:10px;color:#9a9890">Presupuesto total${margen>0?' (neto)':''}</div>
+      </div>
+    </div>
+    ${tablasHTML}
+    <table style="margin-top:14px"><tbody>
+      <tr class="tr-global">
+        <td colspan="5" style="text-align:right;font-size:13px">TOTAL GENERAL</td>
+        <td style="text-align:right;font-size:14px;color:#b87333">${mxFmt(totalGlobal)}</td>
+      </tr>
+    </tbody></table>
+    <div class="footer">
+      <span>Generado el ${fechaImp}</span>
+      <span>${proyecto} · MiObra</span>
+    </div>
+  </div></body></html>`;
+
+  const win=window.open('','_blank','width=960,height=780');
+  win.document.write(html);
+  win.document.close();
+  win.onload=()=>{win.focus();win.print();};
+}
+
 function importarXLSX(evt){
   const file=evt.target.files[0];if(!file)return;
   if(!window.XLSX){showToast('Error: librería XLSX no cargada','err');return;}
@@ -5355,7 +5617,7 @@ Object.assign(window,{
   nuevoPerfil,editarPerfil,guardarPerfil,eliminarPerfil,setPerm,renderPerfiles,updUsrPerfilSel,
   nuevoUsuario,editarUsuario,guardarUsuario,toggleUsuario,abrirProyectoAdmin,abrirProyecto,
   volverSelector,showPage,openModal,closeModal,loadAdminDashboard,
-  guardarConc,editarConc,elimConc,toggleConcInline,cerrarConcInline,guardarConcInline,guardarMov,elimMov,editarMov,onMovCat,
+  guardarConc,editarConc,elimConc,toggleConcInline,cerrarConcInline,guardarConcInline,schedGuardarConcInline,guardarMov,elimMov,editarMov,onMovCat,
   openCatFotos,closeCatFotos,onCatGal,guardarCatFotos,renderCatFotosPend,
   openCatLB,closeCatLB,catLBNav,elimCatFoto,onRecCat,onCorteCat,onCorteConc,onSemCat,onSemConc,
   renderGastos,onFilCat,limpiarFiltrosGastos,
@@ -5369,7 +5631,7 @@ Object.assign(window,{
   openModalEval,guardarEval,updEvalBarra,elimSemana,imprimirPrograma,
   openModalBitacora,guardarBitacora,elimBitacora,renderBitacora,
   renderNomina,updNomDestajo,
-  importarXLSX,renderGlobalDashboard,updSemResponsable,loadAdminProyectos,loadAdminUsuarios,loadAdminActividad,
+  importarXLSX,imprimirAvance,imprimirCatalogo,renderGlobalDashboard,updSemResponsable,loadAdminProyectos,loadAdminUsuarios,loadAdminActividad,
   irASolicitudes,renderGastosTab,openModalSolicitud,guardarSolicitud,loadGlobalData,
   aprobarSolicitud,rechazarSolicitud,convertirAGasto,eliminarSolicitud,renderSolicitudes,
   onSolCat,onSolConc,onSolProvSelect,toggleNuevoProv,guardarProveedorNuevo,renderSolProveedores,
