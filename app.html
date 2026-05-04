@@ -2617,7 +2617,7 @@ async function guardarMov(){
     ref:document.getElementById('m-ref').value.trim(),
     obs:document.getElementById('m-obs').value.trim(),
     creadoPor: isEdit ? (orig?.creadoPor||currentProfile.nombre||currentUser.email) : (currentProfile.nombre||currentUser.email),
-    editadoPor: isEdit ? (currentProfile.nombre||currentUser.email) : undefined,
+    ...(isEdit ? {editadoPor: currentProfile.nombre||currentUser.email} : {}),
   };
   _movEditId = null;
   // Restaurar título modal
