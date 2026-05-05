@@ -298,7 +298,7 @@ tbody tr:hover td{background:var(--sur2);}
 <!-- SELECTOR DE PROYECTO -->
 <div id="screen-selector" class="screen">
   <div class="sel-wrap">
-    <div style="max-width:1000px;margin:0 auto">
+    <div style="max-width:1100px;margin:0 auto">
       <div class="sel-hdr">
         <div>
           <div class="logo" style="color:#f4f2ed">Mi<span>Obra</span></div>
@@ -306,7 +306,16 @@ tbody tr:hover td{background:var(--sur2);}
         </div>
         <button class="bh" onclick="doLogout()">Cerrar sesión</button>
       </div>
-      <div style="color:#d4d0c8;font-size:15px;font-weight:600;margin-bottom:14px">Selecciona un proyecto</div>
+      <!-- Dashboard inversionista -->
+      <div id="inv-dashboard-wrap" style="display:none">
+        <!-- Métricas globales -->
+        <div id="inv-metricas" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:18px"></div>
+        <!-- Tarjetas por proyecto -->
+        <div style="color:#d4d0c8;font-size:13px;font-weight:600;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Proyectos</div>
+        <div id="inv-proyectos-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-bottom:24px"></div>
+        <div style="border-top:0.5px solid rgba(255,255,255,.1);padding-top:16px;margin-bottom:8px;color:#9a9890;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Acceso directo</div>
+      </div>
+      <div style="color:#d4d0c8;font-size:15px;font-weight:600;margin-bottom:14px" id="sel-titulo">Selecciona un proyecto</div>
       <div class="sel-proyectos" id="sel-proyectos"></div>
     </div>
   </div>
@@ -994,11 +1003,16 @@ tbody tr:hover td{background:var(--sur2);}
       <div class="fg"><label>Fecha inicio</label><input id="proy-inicio" type="date"></div>
       <div class="fg"><label>Fecha entrega</label><input id="proy-fin" type="date"></div>
       <div class="fg fc2"><label>Responsable técnico</label><input id="proy-responsable" type="text"></div>
-      <div class="fg fc2">
+      <div class="fg">
+        <label>Inversión requerida ($)</label>
+        <input id="proy-inversion" type="number" min="0" step="any" placeholder="Monto total de inversión">
+        <div style="font-size:11px;color:var(--tx3);margin-top:3px">Monto total de inversión necesaria para el proyecto</div>
+      </div>
+      <div class="fg">
         <label>Margen de utilidad (%)</label>
         <div style="display:flex;align-items:center;gap:10px">
           <input id="proy-margen" type="number" min="0" max="100" step="0.1" placeholder="Ej: 20" style="width:140px">
-          <span style="font-size:12px;color:var(--tx3)">Este porcentaje se descuenta de los precios unitarios del catálogo. Solo visible para inversionistas y administrador.</span>
+          <span style="font-size:12px;color:var(--tx3)">% descuento de precios. Solo visible para admin e inversionistas.</span>
         </div>
       </div>
       <div class="fg fc2">
@@ -1429,7 +1443,7 @@ async function renderGlobalDashboard(){
         const cs=cortes.filter(c=>c.partida===part).sort((a,b)=>a.fecha.localeCompare(b.fecha));
         return s+(cs.length?cs[cs.length-1].pctAcum:0);
       },0)/partidas.length):0;
-      return {...p,presT,gasT,ingT,bal:ingT-gasT,avG,nConc:conceptos.length,nMovs:movs.length};
+      return {...p,presT,gasT,ingT,bal:ingT-gasT,avG,nConc:conceptos.length,nMovs:movs.length,inversion:p.inversion||0};
     } catch(e){ return {...p,presT:0,gasT:0,ingT:0,bal:0,avG:0,error:true}; }
   }));
 
@@ -1437,35 +1451,99 @@ async function renderGlobalDashboard(){
   const totGas=summaries.reduce((s,p)=>s+p.gasT,0);
   const totIng=summaries.reduce((s,p)=>s+p.ingT,0);
   const totBal=totIng-totGas;
+  const totInv=summaries.reduce((s,p)=>s+(p.inversion||0),0);
   const avGlobal=summaries.length?Math.round(summaries.reduce((s,p)=>s+p.avG,0)/summaries.length):0;
 
   el.innerHTML=`
   <div class="metrics" style="margin-bottom:16px">
     <div class="met ca"><div class="ml">Presupuesto total</div><div class="mv">${fmt(totPres)}</div><div class="ms">${summaries.length} proyectos</div></div>
+    ${totInv>0?`<div class="met cb"><div class="ml">💰 Inversión requerida</div><div class="mv">${fmt(totInv)}</div><div class="ms">${summaries.filter(p=>p.inversion>0).length} proyectos con inversión</div></div>`:''}
     <div class="met cr"><div class="ml">Total gastado</div><div class="mv">${fmt(totGas)}</div><div class="ms">${pct(totGas,totPres)}% ejercido</div></div>
     <div class="met cg"><div class="ml">Total ingresos</div><div class="mv">${fmt(totIng)}</div></div>
     <div class="met ${totBal>=0?'cg':'cr'}"><div class="ml">Balance global</div><div class="mv">${fmt(totBal)}</div></div>
-    <div class="met cb"><div class="ml">Avance promedio</div><div class="mv">${avGlobal}%</div></div>
+    <div class="met ca"><div class="ml">Avance promedio</div><div class="mv">${avGlobal}%</div></div>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
-  ${summaries.map(p=>`
+  ${summaries.map(p=>{
+    // ── Tiempo de ejecución ──
+    const hoy=new Date();
+    const dIni=p.inicio?new Date(p.inicio+'T12:00:00'):null;
+    const dFin=p.fin?new Date(p.fin+'T12:00:00'):null;
+    const mesesTotal=dIni&&dFin?Math.round((dFin-dIni)/(1000*60*60*24*30.44)):null;
+    const mesesTrans=dIni?Math.max(0,Math.round((hoy-dIni)/(1000*60*60*24*30.44))):null;
+    const mesesRest=dFin?Math.max(0,Math.round((dFin-hoy)/(1000*60*60*24*30.44))):null;
+    const pctTiempo=mesesTotal&&mesesTrans!=null?Math.min(Math.round(mesesTrans/mesesTotal*100),100):null;
+    const tiempoColor=pctTiempo===null?'var(--tx3)':pctTiempo>=90?'var(--rd)':pctTiempo>=70?'var(--am)':'var(--gn)';
+    const tiempoLabel=dFin?(hoy>dFin?'⚠️ Vencido':mesesRest===0?'Último mes':`${mesesRest} mes${mesesRest!==1?'es':''} restante${mesesRest!==1?'s':''}`):'';
+    // ── Margen de utilidad (definido en el proyecto) ──
+    const margenPct = p.margen!=null ? p.margen : null;
+    const utilidadMonto = margenPct!=null ? p.presT * margenPct / 100 : null;
+    const margenColor = margenPct===null?'var(--tx3)':margenPct>=20?'var(--gn)':margenPct>=10?'var(--am)':'var(--rd)';
+    // ── Utilidad neta: margen / (margen + inversión) ──
+    // margen (monto) = presupuesto × margen%
+    const utilNeta = (p.inversion>0 && utilidadMonto!=null) ? utilidadMonto : null;
+    const utilNetaPct = (p.inversion>0 && utilidadMonto!=null && (utilidadMonto+p.inversion)>0)
+      ? Math.round(utilidadMonto / (utilidadMonto + p.inversion) * 10000) / 100 : null;
+    const utilNetaColor = utilNetaPct===null?'var(--tx3)':utilNetaPct>=20?'var(--gn)':utilNetaPct>=10?'var(--am)':utilNetaPct>=0?'var(--am)':'var(--rd)';
+    return`
     <div class="card" style="cursor:pointer" onclick="abrirProyectoAdmin('${p.id}')">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
-        <div style="font-size:14px;font-weight:700">${p.nombre}</div>
-        <span class="badge ${p.avG>=80?'bg':p.avG>=40?'ba':'bx'}" style="font-size:12px">${p.avG}% avance</span>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+        <div>
+          <div style="font-size:14px;font-weight:700">${p.nombre}</div>
+          ${p.ubicacion?`<div style="font-size:11px;color:var(--tx3)">${p.ubicacion}</div>`:''}
+        </div>
+        <span class="badge ${p.avG>=80?'bg':p.avG>=40?'ba':'bx'}" style="font-size:12px">${p.avG}%</span>
       </div>
       ${p.error?'<p style="color:var(--rd);font-size:12px">Error al cargar datos</p>':`
+      <!-- Avance físico -->
       <div style="margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--tx3);margin-bottom:3px"><span>Avance físico</span><span>${p.avG}%</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--tx3);margin-bottom:3px"><span>Avance físico</span><span>${p.avG}%</span></div>
         <div class="pb"><div class="pf ${p.avG>=80?'pfg':p.avG>=40?'pfa':'pfr'}" style="width:${p.avG}%"></div></div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
-        <div style="background:var(--sur2);padding:7px;border-radius:7px"><div style="color:var(--tx3)">Presupuesto</div><div style="font-weight:600">${fmt(p.presT)}</div></div>
-        <div style="background:var(--sur2);padding:7px;border-radius:7px"><div style="color:var(--tx3)">Gastado</div><div style="font-weight:600;color:var(--rd)">${fmt(p.gasT)}</div></div>
-        <div style="background:var(--sur2);padding:7px;border-radius:7px"><div style="color:var(--tx3)">Balance</div><div style="font-weight:600;color:${p.bal>=0?'var(--gn)':'var(--rd)'}">${fmt(p.bal)}</div></div>
-        <div style="background:var(--sur2);padding:7px;border-radius:7px"><div style="color:var(--tx3)">Ejercido</div><div style="font-weight:600">${pct(p.gasT,p.presT)}%</div></div>
+      <!-- Tiempo de ejecución -->
+      ${mesesTotal!==null?`<div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--tx3);margin-bottom:3px">
+          <span>⏱ Tiempo ${mesesTrans}/${mesesTotal} meses</span>
+          <span style="color:${tiempoColor};font-weight:600">${tiempoLabel}</span>
+        </div>
+        <div style="position:relative;height:5px;background:var(--sur2);border-radius:3px;overflow:hidden">
+          <div style="position:absolute;left:0;top:0;height:100%;width:${pctTiempo}%;background:${tiempoColor};border-radius:3px;transition:width .4s"></div>
+        </div>
+      </div>`:''}
+      <!-- Grid de datos -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">
+        <div style="background:var(--sur2);padding:6px 8px;border-radius:7px"><div style="color:var(--tx3);font-size:10px">Presupuesto</div><div style="font-weight:600">${fmt(p.presT)}</div></div>
+        <div style="background:var(--sur2);padding:6px 8px;border-radius:7px"><div style="color:var(--tx3);font-size:10px">Gastado</div><div style="font-weight:600;color:var(--rd)">${fmt(p.gasT)}</div></div>
+        <div style="background:var(--sur2);padding:6px 8px;border-radius:7px"><div style="color:var(--tx3);font-size:10px">Balance</div><div style="font-weight:600;color:${p.bal>=0?'var(--gn)':'var(--rd)'}">${fmt(p.bal)}</div></div>
+        <div style="background:var(--sur2);padding:6px 8px;border-radius:7px"><div style="color:var(--tx3);font-size:10px">Ejercido</div><div style="font-weight:600">${pct(p.gasT,p.presT)}%</div></div>
+        <!-- Inversión + Utilidad bruta + Utilidad neta -->
+        ${p.inversion>0?`
+        <div style="background:var(--blb);padding:6px 8px;border-radius:7px;border-left:2px solid var(--bl)">
+          <div style="color:var(--bl);font-size:10px;font-weight:600">💰 Inversión</div>
+          <div style="font-weight:700;color:var(--bl)">${fmt(p.inversion)}</div>
+        </div>
+        ${margenPct!=null?`<div style="background:var(--gnb);padding:6px 8px;border-radius:7px;border-left:2px solid ${margenColor}">
+          <div style="color:${margenColor};font-size:10px;font-weight:600">📈 Utilidad bruta</div>
+          <div style="font-weight:700;color:${margenColor}">${margenPct}%</div>
+          <div style="font-size:10px;color:var(--tx3)">${fmt(utilidadMonto)}</div>
+        </div>`:''}
+        <div style="background:${utilNetaPct>=0?'var(--gnb)':'var(--rdb)'};padding:6px 8px;border-radius:7px;border-left:2px solid ${utilNetaColor};grid-column:span 2">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:${utilNetaColor};font-size:10px;font-weight:600">💵 Utilidad neta (presup. − inversión)</div>
+              <div style="font-weight:700;color:${utilNetaColor};font-size:14px;margin-top:2px">${fmt(Math.abs(utilNeta))} <span style="font-size:11px">${utilNeta>=0?'ganancia':'déficit'}</span></div>
+            </div>
+            <div style="font-size:22px;font-weight:800;color:${utilNetaColor}">${utilNetaPct!==null?Number(utilNetaPct).toFixed(2)+'%':'—'}</div>
+          </div>
+          <!-- Barra de rentabilidad -->
+          <div style="position:relative;height:6px;background:rgba(0,0,0,.08);border-radius:3px;overflow:hidden;margin-top:6px">
+            <div style="position:absolute;left:0;top:0;height:100%;width:${Math.min(Math.abs(utilNetaPct),100)}%;background:${utilNetaColor};border-radius:3px"></div>
+          </div>
+        </div>
+        `:''}
       </div>`}
-    </div>`).join('')}
+    </div>`;
+  }).join('')}
   </div>`;
 }
 
@@ -1493,7 +1571,8 @@ function editarProyecto(id){
   document.getElementById('proy-responsable').value=p.responsable||'';
   document.getElementById('proy-inicio').value=p.inicio||'';
   document.getElementById('proy-fin').value=p.fin||'';
-  document.getElementById('proy-margen').value=p.margen!=null?p.margen:''
+  document.getElementById('proy-margen').value=p.margen!=null?p.margen:'';
+  document.getElementById('proy-inversion').value=p.inversion!=null?p.inversion:'';
   const usuarios = window._adminUsuarios || [];
   renderProyUsuarios(usuarios, p.usuariosIds||[]);
   openModal('modal-proyecto');
@@ -1519,6 +1598,7 @@ async function guardarProyecto(){
   const usuariosIds = Array.from(checks).map(c=>c.value);
 
   const margenVal = document.getElementById('proy-margen').value;
+  const inversionVal = document.getElementById('proy-inversion').value;
   const data = {
     nombre,
     ubicacion: document.getElementById('proy-ubicacion').value.trim(),
@@ -1527,6 +1607,7 @@ async function guardarProyecto(){
     inicio: document.getElementById('proy-inicio').value,
     fin: document.getElementById('proy-fin').value,
     margen: margenVal!=='' ? parseFloat(margenVal) : null,
+    inversion: inversionVal!=='' ? parseFloat(inversionVal) : null,
     usuariosIds,
     activo: true,
     actualizadoEn: serverTimestamp()
@@ -1695,8 +1776,181 @@ async function loadProyectosInversionista(){
     const proyectos = [];
     snap.forEach(d=>proyectos.push({id:d.id,...d.data()}));
     mostrarSelectorProyectos(proyectos, true);
+    // Render dashboard inversionista
+    await renderInvDashboard(proyectos);
   } catch(e){ showToast('Error: '+e.message,'err'); }
   setLoading('');
+}
+
+async function renderInvDashboard(proyectos){
+  if(!proyectos.length || currentProfile.rol!=='inversionista') return;
+  const wrap=document.getElementById('inv-dashboard-wrap');
+  const cardsEl=document.getElementById('inv-proyectos-cards');
+  const metEl=document.getElementById('inv-metricas');
+  const tituloEl=document.getElementById('sel-titulo');
+  if(!wrap) return;
+  wrap.style.display='block';
+  if(tituloEl) tituloEl.textContent='Acceso directo a proyecto';
+  const mxFmt=n=>'$'+Number(n||0).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const nFmt2=n=>Number(n||0).toFixed(2);
+
+  // Cargar datos de cada proyecto
+  cardsEl.innerHTML='<div style="color:#9a9890;font-size:12px">Cargando datos...</div>';
+  const summaries = await Promise.all(proyectos.map(async p=>{
+    try {
+      const [cSnap,mSnap,cortSnap]=await Promise.all([
+        getDocs(collection(db,'proyectos',p.id,'conceptos')),
+        getDocs(collection(db,'proyectos',p.id,'movimientos')),
+        getDocs(collection(db,'proyectos',p.id,'cortes')),
+      ]);
+      const concs=[],movs=[],corts=[];
+      cSnap.forEach(d=>concs.push(d.data()));
+      mSnap.forEach(d=>movs.push(d.data()));
+      cortSnap.forEach(d=>corts.push(d.data()));
+      const pres=concs.reduce((s,c)=>s+c.cantidad*c.precio,0); // presupuesto bruto igual que admin
+      const gas=movs.filter(m=>m.tipo==='gasto').reduce((s,m)=>s+m.monto,0);
+      const ing=movs.filter(m=>m.tipo==='ingreso').reduce((s,m)=>s+m.monto,0);
+      const parts=[...new Set(concs.map(c=>c.partida))];
+      const avG=parts.length?Math.round(parts.reduce((s,pt)=>{
+        const cs=corts.filter(c=>c.partida===pt).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+        return s+(cs.length?cs[cs.length-1].pctAcum:0);
+      },0)/parts.length):0;
+      return {...p,pres,gas,ing,bal:ing-gas,avG};
+    } catch(e){ return {...p,pres:0,gas:0,ing:0,bal:0,avG:0,err:true}; }
+  }));
+
+  // Totales
+  const totPres=summaries.reduce((s,p)=>s+p.pres,0);
+  const totGas=summaries.reduce((s,p)=>s+p.gas,0);
+  const totIng=summaries.reduce((s,p)=>s+p.ing,0);
+  const totInv=summaries.reduce((s,p)=>s+(p.inversion||0),0);
+  const avGlob=summaries.length?Math.round(summaries.reduce((s,p)=>s+p.avG,0)/summaries.length):0;
+  const avCol=avGlob>=80?'#2e6b47':avGlob>=40?'#8a6010':'#b52e2e';
+
+  // Cálculos globales financieros
+  const totUtilBruta = summaries.reduce((s,p)=>s+(p.margen!=null?p.pres*p.margen/100:0),0);
+  const totUtilNetaMonto = summaries.reduce((s,p)=>{
+    const um=p.margen!=null?p.pres*p.margen/100:null;
+    return s+(um!=null?um:0);
+  },0);
+  const totUtilNetaPct = (totInv>0&&totUtilBruta>0&&(totUtilBruta+totInv)>0)
+    ? Math.round(totUtilBruta/(totUtilBruta+totInv)*10000)/100 : null;
+  const unCol = totUtilNetaPct===null?'#9a9890':totUtilNetaPct>=20?'#7fc49a':totUtilNetaPct>=10?'#c8920a':'#e08080';
+  const avgMargen = summaries.filter(p=>p.margen!=null).length
+    ? Math.round(summaries.filter(p=>p.margen!=null).reduce((s,p)=>s+p.margen,0)/summaries.filter(p=>p.margen!=null).length*100)/100 : null;
+
+  const metCard=(borde,titulo,valor,sub='',color='#d4d0c8')=>
+    `<div style="background:rgba(255,255,255,.08);padding:14px 18px;border-radius:10px;border-left:3px solid ${borde}">
+      <div style="font-size:10px;color:#9a9890;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${titulo}</div>
+      <div style="font-size:20px;font-weight:700;color:${color}">${valor}</div>
+      ${sub?`<div style="font-size:11px;color:#9a9890;margin-top:2px">${sub}</div>`:''}
+    </div>`;
+
+  // Métricas globales — solo 4 indicadores clave
+  metEl.innerHTML=`
+    ${metCard('#b87333','🏗 Total de proyectos', mxFmt(totPres), summaries.length+' proyecto'+(summaries.length!==1?'s':''))}
+    ${totInv>0?metCard('#486b9f','💰 Inversión', mxFmt(totInv), summaries.filter(p=>p.inversion>0).length+' proyectos','#8fa8d0'):''}
+    ${avgMargen!=null?metCard('#c8920a','📊 Margen', avgMargen.toFixed(2)+'%', mxFmt(totUtilBruta),'#c8920a'):''}
+    ${totUtilNetaPct!==null?`<div style="background:rgba(255,255,255,.08);padding:14px 18px;border-radius:10px;border-left:3px solid ${unCol}">
+      <div style="font-size:10px;color:#9a9890;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">💵 Utilidad neta</div>
+      <div style="font-size:26px;font-weight:800;color:${unCol}">${totUtilNetaPct.toFixed(2)}%</div>
+      <div style="font-size:11px;color:#9a9890;margin-top:2px">${mxFmt(totUtilNetaMonto)}</div>
+      <div style="height:5px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden;margin-top:6px">
+        <div style="height:100%;width:${Math.min(totUtilNetaPct,100)}%;background:${unCol};border-radius:3px"></div>
+      </div>
+    </div>`:''}`;
+
+  // Tarjetas por proyecto
+  cardsEl.innerHTML=summaries.map(p=>{
+    const hoy=new Date();
+    const dIni=p.inicio?new Date(p.inicio+'T12:00:00'):null;
+    const dFin=p.fin?new Date(p.fin+'T12:00:00'):null;
+    const mesesT=dIni&&dFin?Math.round((dFin-dIni)/(1000*60*60*24*30.44)):null;
+    const mesesTr=dIni?Math.max(0,Math.round((hoy-dIni)/(1000*60*60*24*30.44))):null;
+    const mesesR=dFin?Math.max(0,Math.round((dFin-hoy)/(1000*60*60*24*30.44))):null;
+    const pctTi=mesesT&&mesesTr!=null?Math.min(Math.round(mesesTr/mesesT*100),100):null;
+    const tCol=pctTi===null?'#9a9890':pctTi>=90?'#e08080':pctTi>=70?'#c8920a':'#7fc49a';
+    // Mismos cálculos que admin dashboard
+    const margenPctI = p.margen!=null ? p.margen : null;
+    const utilBrutaMontoI = margenPctI!=null ? p.pres*margenPctI/100 : null;
+    const utilBrutaColor = margenPctI===null?'#9a9890':margenPctI>=20?'#7fc49a':margenPctI>=10?'#c8920a':'#e08080';
+    // Utilidad neta = margen$ / (margen$ + inversión)
+    const utilNetaI = utilBrutaMontoI; // monto = margen bruto en $
+    const utilNetaPctI = (p.inversion>0 && utilBrutaMontoI!=null && (utilBrutaMontoI+p.inversion)>0)
+      ? Math.round(utilBrutaMontoI/(utilBrutaMontoI+p.inversion)*10000)/100 : null;
+    const utilNetaColorI = utilNetaPctI===null?'#9a9890':utilNetaPctI>=20?'#7fc49a':utilNetaPctI>=10?'#c8920a':utilNetaPctI>=0?'#c8920a':'#e08080';
+    const avCol2=p.avG>=80?'#7fc49a':p.avG>=40?'#c8920a':'#e08080';
+    return`<div style="background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.12);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s"
+      onclick="abrirProyecto(${JSON.stringify({id:p.id,nombre:p.nombre,ubicacion:p.ubicacion||'',empresa:p.empresa||'',inicio:p.inicio||'',fin:p.fin||'',margen:p.margen||null,inversion:p.inversion||null}).replace(/"/g,'&quot;')})"
+      onmouseover="this.style.background='rgba(255,255,255,.1)'" onmouseout="this.style.background='rgba(255,255,255,.06)'">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#d4d0c8">${p.nombre}</div>
+          ${p.ubicacion?`<div style="font-size:11px;color:#9a9890">${p.ubicacion}</div>`:''}
+        </div>
+        <span style="background:${avCol2}33;color:${avCol2};font-size:12px;font-weight:700;padding:3px 10px;border-radius:10px">${p.avG}%</span>
+      </div>
+      <!-- Avance -->
+      <div style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#9a9890;margin-bottom:3px"><span>Avance físico</span><span>${p.avG}%</span></div>
+        <div style="height:6px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${p.avG}%;background:${avCol2};border-radius:3px"></div>
+        </div>
+      </div>
+      <!-- Tiempo -->
+      ${pctTi!==null?`<div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#9a9890;margin-bottom:3px">
+          <span>⏱ ${mesesTr}/${mesesT} meses</span>
+          <span style="color:${tCol}">${dFin&&hoy>dFin?'⚠️ Vencido':mesesR===0?'Último mes':mesesR+' mes'+(mesesR!==1?'es':'')+' rest.'}</span>
+        </div>
+        <div style="height:5px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pctTi}%;background:${tCol};border-radius:3px"></div>
+        </div>
+      </div>`:''}
+      <!-- Datos financieros — idéntico a admin dashboard -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">
+        <div style="background:rgba(255,255,255,.06);padding:6px 8px;border-radius:7px">
+          <div style="color:#9a9890;font-size:10px">Presupuesto</div>
+          <div style="font-weight:600;color:#d4d0c8">${mxFmt(p.pres)}</div>
+        </div>
+        <div style="background:rgba(255,255,255,.06);padding:6px 8px;border-radius:7px">
+          <div style="color:#9a9890;font-size:10px">Gastado</div>
+          <div style="font-weight:600;color:#e08080">${mxFmt(p.gas)}</div>
+        </div>
+        <div style="background:rgba(255,255,255,.06);padding:6px 8px;border-radius:7px">
+          <div style="color:#9a9890;font-size:10px">Balance</div>
+          <div style="font-weight:600;color:${p.bal>=0?'#7fc49a':'#e08080'}">${mxFmt(p.bal)}</div>
+        </div>
+        <div style="background:rgba(255,255,255,.06);padding:6px 8px;border-radius:7px">
+          <div style="color:#9a9890;font-size:10px">Ejercido</div>
+          <div style="font-weight:600;color:#d4d0c8">${p.pres>0?Math.round(p.gas/p.pres*100):0}%</div>
+        </div>
+        ${p.inversion>0?`
+        <div style="background:rgba(72,107,159,.25);padding:6px 8px;border-radius:7px;border-left:2px solid #486b9f">
+          <div style="color:#8fa8d0;font-size:10px;font-weight:600">💰 Inversión</div>
+          <div style="font-weight:700;color:#8fa8d0">${mxFmt(p.inversion)}</div>
+        </div>
+        ${utilBrutaMontoI!=null?`<div style="background:rgba(46,107,71,.2);padding:6px 8px;border-radius:7px;border-left:2px solid ${utilBrutaColor}">
+          <div style="color:${utilBrutaColor};font-size:10px;font-weight:600">📈 Utilidad bruta</div>
+          <div style="font-weight:700;color:${utilBrutaColor}">${margenPctI}%</div>
+          <div style="font-size:10px;color:#9a9890">${mxFmt(utilBrutaMontoI)}</div>
+        </div>`:''}
+        <div style="background:${utilNetaI>=0?'rgba(46,107,71,.15)':'rgba(181,46,46,.15)'};padding:6px 8px;border-radius:7px;border-left:2px solid ${utilNetaColorI};grid-column:span 2">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:${utilNetaColorI};font-size:10px;font-weight:600">💵 Utilidad neta (presup. − inversión)</div>
+              <div style="font-weight:700;color:${utilNetaColorI};font-size:13px;margin-top:2px">${utilNetaI!=null?mxFmt(Math.abs(utilNetaI)):'—'} <span style="font-size:10px;font-weight:400">${utilNetaI!=null?(utilNetaI>=0?'ganancia':'déficit'):''}</span></div>
+            </div>
+            <div style="font-size:20px;font-weight:800;color:${utilNetaColorI}">${utilNetaPctI!==null?Number(utilNetaPctI).toFixed(2)+'%':'—'}</div>
+          </div>
+          ${utilNetaPctI!=null?`<div style="height:5px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden;margin-top:5px">
+            <div style="height:100%;width:${Math.min(Math.abs(utilNetaPctI),100)}%;background:${utilNetaColorI};border-radius:3px"></div>
+          </div>`:''}
+        </div>
+        `:''}
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function mostrarSelectorProyectos(proyectos, soloVer=false){
@@ -5615,7 +5869,7 @@ function getPermisosEfectivos(profile){
 Object.assign(window,{
   doLogin,doLogout,showAdminTab,nuevoProyecto,editarProyecto,guardarProyecto,eliminarProyecto,
   nuevoPerfil,editarPerfil,guardarPerfil,eliminarPerfil,setPerm,renderPerfiles,updUsrPerfilSel,
-  nuevoUsuario,editarUsuario,guardarUsuario,toggleUsuario,abrirProyectoAdmin,abrirProyecto,
+  nuevoUsuario,editarUsuario,guardarUsuario,toggleUsuario,abrirProyectoAdmin,abrirProyecto,renderInvDashboard,
   volverSelector,showPage,openModal,closeModal,loadAdminDashboard,
   guardarConc,editarConc,elimConc,toggleConcInline,cerrarConcInline,guardarConcInline,schedGuardarConcInline,guardarMov,elimMov,editarMov,onMovCat,
   openCatFotos,closeCatFotos,onCatGal,guardarCatFotos,renderCatFotosPend,
